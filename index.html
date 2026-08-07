@@ -379,7 +379,8 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
 
     fetch("/api/ask", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ question: text, history: history.slice(-6) })
+      body: JSON.stringify({ question: text, history: history.slice(-6),
+        where: (window.__carkWhere ? window.__carkWhere() : null) })
     })
     .then(function(r){ return r.json().then(function(d){
       if (!r.ok) throw new Error(d.error || "cark did not answer"); return d; }); })
@@ -402,39 +403,90 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
   }
 
   /* ---------- bother the cat ----------
-     Repeating an action wears cark out. That is the whole joke and it is also
-     just how cats work, so the copy pools are ordered by patience remaining. */
+     Where cark is IS its mood. Each place has its own patience, its own idea of
+     what an interaction is worth, and its own reasons for leaving. Restlessness
+     builds from time and from being bothered, and when it tips cark goes
+     somewhere else without asking. */
   var pen = document.getElementById("pen"),
       stage = document.getElementById("stage"),
       says = document.getElementById("says");
 
-  var tally = { pet:0, feed:0, play:0 }, locked = false, sleepTimer = null;
   var use3d = !reduced && window.CarkCat && window.CarkCat.init(stage);
   if (!use3d) pen.classList.add("fallback");
 
-  var LINES = {
-    pet: [
-      "prrp", "mrrp", "thats fine",
-      "ok thats enough", "youre still doing it",
-      "im going to bite you in a minute", "fine. keep going i guess"
-    ],
-    feed: [
-      "mrow", "i already ate. put it down anyway",
-      "ill have it later. leave it", "im not hungry. leave it",
-      "theres food in the bowl and im telling you theres no food",
-      "you have fed me four times. i remember none of them"
-    ],
-    play: [
-      "brrt", "got it", "missed", "i wasnt trying",
-      "ok im tired", "you go get it", "im lying down now. bring it here"
-    ]
+  var MOOD = {
+    window: {
+      mood: "watchful",
+      drift: 0.055,          // restlessness per second
+      cost: { pet: 0.9, feed: -3.2, play: 1.5 },
+      leave: 11,
+      arrive: "this is where i live. the bird is out there",
+      lines: {
+        pet:  ["prrp", "mrrp", "thats fine", "youre in my sun slightly",
+               "ok thats enough", "im going to bite you in a minute"],
+        feed: ["mrow", "leave it there. ill get it later",
+               "i already ate. put it down anyway", "im not hungry. leave it",
+               "theres food in the bowl and im telling you theres no food"],
+        play: ["brrt", "got it", "the bird does that better",
+               "missed", "ok im tired", "you go get it"]
+      },
+      idle: ["the bird is back", "nothing has happened for a while",
+             "someone walked past outside", "the sun moved off my spot"],
+      leaving: ["im going to go and think about something",
+                "im going outside. i dont know why",
+                "somewhere else now"]
+    },
+    park: {
+      mood: "on edge",
+      drift: 0.17,           // hates it here, leaves soonest
+      cost: { pet: 1.6, feed: -1.1, play: 2.4 },
+      leave: 9,
+      arrive: "im outside. i dont like it. im staying",
+      lines: {
+        pet:  ["not out here", "mrrp. someone might see",
+               "im busy being outside", "stop. im concentrating",
+               "everything is happening and youre doing this"],
+        feed: ["im not eating out here", "put that back in the house",
+               "hrrn. not in front of the birds", "ill eat inside"],
+        play: ["theres already too much happening", "brrt. theres a dog somewhere",
+               "i cant. the grass is doing something", "no. not out here"]
+      },
+      idle: ["theres too much sky", "i can hear four things at once",
+             "the grass is wrong", "something moved and it wasnt me"],
+      leaving: ["im going back inside", "ive been outside long enough",
+                "thats enough of that"]
+    },
+    mind: {
+      mood: "somewhere else",
+      drift: 0.03,           // could stay here forever
+      cost: { pet: 1.3, feed: 0.4, play: 1.1 },
+      leave: 10,
+      arrive: "theres nothing in here. thats not a complaint",
+      lines: {
+        pet:  ["i felt that from very far away", "mrrp. i think that was you",
+               "something touched me. it took a while to arrive",
+               "youre outside this. i can tell"],
+        feed: ["theres no food in here. i checked",
+               "i cant eat in here and you know that", "thats a picture of food"],
+        play: ["nothings solid enough to catch", "i pounced on nothing. it went fine",
+               "it went through me", "theres nothing to miss"]
+      },
+      idle: ["i cant remember what the bird looks like",
+             "everything i want is somewhere else",
+             "ive been in here a while", "nothing is the wrong shape in here"],
+      leaving: ["somethings happening in the real one",
+                "im going back to the window", "im leaving my own head"]
+    }
   };
+
+  var here = "window", restless = 0, tally = {}, locked = false,
+      settled = 0, lastPoke = Date.now(), moving = false;
 
   function speak(text){
     says.innerHTML = "";
-    var s = document.createElement("span");
-    s.textContent = text;
-    says.appendChild(s);
+    var el = document.createElement("span");
+    el.textContent = text;
+    says.appendChild(el);
   }
 
   function spark(text){
@@ -442,31 +494,80 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     var el = document.createElement("div");
     el.className = "spark";
     el.textContent = text;
-    el.style.left = (36 + Math.random()*28) + "%";
-    el.style.top  = (30 + Math.random()*18) + "%";
+    el.style.left = (36 + Math.random() * 28) + "%";
+    el.style.top  = (30 + Math.random() * 18) + "%";
     pen.appendChild(el);
     setTimeout(function(){ el.remove(); }, 1300);
   }
 
-  function wake(){
-    if (use3d) window.CarkCat.wake();
-    clearTimeout(sleepTimer);
-    sleepTimer = setTimeout(function(){
-      if (use3d) window.CarkCat.sleep();
-      speak("asleep");
-    }, 24000);
+  function markScene(name){
+    Array.prototype.forEach.call(document.querySelectorAll("[data-scene]"), function(b){
+      b.classList.toggle("on", b.getAttribute("data-scene") === name);
+    });
   }
 
-  var DURATION = { pet:1700, feed:2500, play:2700 };
+  function goTo(name, byCark){
+    here = name;
+    restless = 0;
+    tally = {};
+    settled = Date.now();
+    markScene(name);
+    if (use3d) window.CarkCat.setScene(name);
+    if (!byCark) speak(MOOD[name].arrive);
+  }
+
+  /* where a cat goes depends on why it left */
+  function destination(){
+    var m = tally;
+    if ((m.play || 0) >= 2) return "mind";              // tired
+    if ((m.pet || 0) + (m.feed || 0) + (m.play || 0) >= 4) return "mind";  // fed up
+    if (here === "park") return "window";               // always wants to go home
+    if (here === "mind") return "window";               // surfaces at the window
+    return Math.random() < 0.45 ? "park" : "mind";
+  }
+
+  function wander(){
+    if (moving || locked) return;
+    moving = true;
+    var mood = MOOD[here];
+    speak(mood.leaving[Math.floor(Math.random() * mood.leaving.length)]);
+    var to = destination();
+    setTimeout(function(){
+      goTo(to, true);
+      setTimeout(function(){ speak(MOOD[to].arrive); moving = false; }, 700);
+    }, 1600);
+  }
+
+  /* restlessness ticks up on its own and jumps when bothered */
+  setInterval(function(){
+    if (moving || document.hidden) return;
+    var mood = MOOD[here];
+    restless += mood.drift;
+
+    // a cat left completely alone eventually wanders off too
+    if (Date.now() - lastPoke > 45000) restless += mood.drift * 0.6;
+
+    if (restless >= mood.leave) { wander(); return; }
+
+    // occasional unprompted remark, more often the more restless it is
+    if (Math.random() < 0.004 + restless / mood.leave * 0.006){
+      speak(mood.idle[Math.floor(Math.random() * mood.idle.length)]);
+    }
+  }, 1000);
+
+  var DURATION = { pet: 1700, feed: 2500, play: 2700 };
 
   function act(name){
-    if (locked) return;
+    if (locked || moving) return;
     locked = true;
-    wake();
+    lastPoke = Date.now();
 
-    var pool = LINES[name];
-    speak(pool[Math.min(tally[name], pool.length - 1)]);
-    tally[name]++;
+    var mood = MOOD[here];
+    tally[name] = (tally[name] || 0) + 1;
+    restless = Math.max(0, restless + mood.cost[name]);
+
+    var pool = mood.lines[name];
+    speak(pool[Math.min(tally[name] - 1, pool.length - 1)]);
 
     if (name === "pet"){
       pen.classList.add("happy");
@@ -481,37 +582,27 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     }
 
     setTimeout(function(){
-      pen.classList.remove("happy","purring");
+      pen.classList.remove("happy", "purring");
       locked = false;
+      if (restless >= mood.leave) setTimeout(wander, 900);
     }, DURATION[name]);
   }
 
   Array.prototype.forEach.call(document.querySelectorAll("[data-scene]"), function(b){
     b.addEventListener("click", function(){
-      Array.prototype.forEach.call(document.querySelectorAll("[data-scene]"), function(o){
-        o.classList.toggle("on", o === b);
-      });
-      var name = b.getAttribute("data-scene");
-      if (use3d) window.CarkCat.setScene(name);
-      speak(SCENE_LINES[name]);
-      wake();
+      lastPoke = Date.now();
+      goTo(b.getAttribute("data-scene"), false);
     });
   });
-
-  var SCENE_LINES = {
-    window: "this is where i live. the bird is out there",
-    park: "im outside. i dont like it. im staying",
-    mind: "theres nothing in here. thats not a complaint"
-  };
-
   Array.prototype.forEach.call(document.querySelectorAll("[data-act]"), function(b){
     b.addEventListener("click", function(){ act(b.getAttribute("data-act")); });
   });
-
-  /* the canvas reports taps back through this, so a drag never counts as a pet */
   window.__carkTap = function(){ act("pet"); };
   document.getElementById("petCat").addEventListener("click", function(){ act("pet"); });
-  wake();
+
+  /* the ask section answers from wherever cark currently is */
+  window.__carkWhere = function(){ return { scene: here, mood: MOOD[here].mood }; };
+  goTo("window", true);
 
   /* ---------- cat mind ---------- */
   var SEED = [

@@ -59,6 +59,15 @@ window.CarkCat = (function () {
   var state = "idle", stateUntil = 0, spin = 0, spinTarget = 0,
       dragging = false, lastX = 0, dragged = false, nextGlance = 3, glance = 0;
 
+  /* body language per place. at the window cark is settled, at the park it is
+     wound up and scanning, in its own head it barely moves. */
+  var TEMPER = {
+    window: { breath: 1.4,  tail: 1.4, tailAmp: 0.055, glanceGap: 4.5, glanceArc: 0.7,  ear: 0.97 },
+    park:   { breath: 2.3,  tail: 3.1, tailAmp: 0.12,  glanceGap: 1.3, glanceArc: 1.15, ear: 0.9  },
+    mind:   { breath: 0.85, tail: 0.5, tailAmp: 0.03,  glanceGap: 7.5, glanceArc: 0.35, ear: 0.99 }
+  };
+  function temper() { return TEMPER[activeScene] || TEMPER.window; }
+
   function buildCat() {
     cat = new THREE.Group();
 
@@ -509,13 +518,14 @@ window.CarkCat = (function () {
 
     animateScene(t);
 
-    var breath = Math.sin(t * 1.4) * 0.011;
+    var tp = temper();
+    var breath = Math.sin(t * tp.breath) * 0.011;
     cat.scale.set(1 + breath, 1 - breath, 1 + breath);
 
     /* tail: slower and wider at the base, the curl holds its shape */
     for (var i = 0; i < tailBones.length; i++) {
-      var speed = state === "play" ? 4.6 : state === "sleep" ? 0.6 : 1.4;
-      var amp = state === "play" ? 0.13 : state === "sleep" ? 0.02 : 0.055;
+      var speed = state === "play" ? 4.6 : state === "sleep" ? 0.6 : tp.tail;
+      var amp = state === "play" ? 0.13 : state === "sleep" ? 0.02 : tp.tailAmp;
       var base = i === 0 ? 0 : 0.3;
       tailBones[i].rotation.z = base + Math.sin(t * speed - i * 0.5) * amp;
       tailBones[i].rotation.x = Math.sin(t * speed * 0.7 - i * 0.4) * amp * 0.6;
@@ -524,7 +534,7 @@ window.CarkCat = (function () {
     /* ears twitch on their own, which is most of what sells it as alive */
     ears.forEach(function (e, i) {
       var s = i === 0 ? -1 : 1;
-      var tw = Math.max(0, Math.sin(t * 0.7 + i * 2.3) - 0.97) * 12;
+      var tw = Math.max(0, Math.sin(t * 0.7 + i * 2.3) - tp.ear) * 12;
       e.rotation.z = s * -0.3 - s * tw * 0.25;
       e.rotation.x = state === "sleep" ? 0.4 : -tw * 0.1;
     });
@@ -534,7 +544,10 @@ window.CarkCat = (function () {
 
     if (state === "idle") {
       /* occasional glance so it is never perfectly still */
-      if (t > nextGlance) { glance = (Math.random() - 0.5) * 0.7; nextGlance = t + 3 + Math.random() * 5; }
+      if (t > nextGlance) {
+        glance = (Math.random() - 0.5) * tp.glanceArc;
+        nextGlance = t + tp.glanceGap * (0.6 + Math.random() * 0.9);
+      }
       head.rotation.y += (glance - head.rotation.y) * 0.03;
       head.rotation.x += (Math.sin(t * 0.6) * 0.04 - head.rotation.x) * 0.05;
     } else {

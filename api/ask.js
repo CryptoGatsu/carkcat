@@ -119,7 +119,7 @@ const SHILL = ["buy","buying","sell","selling","moon","pump","dump","bullish","b
 /* Mode choice reacts to the question. Picking purely at random is why a direct
    question like "what are you" could land on agreement and read as broken
    rather than funny. */
-function pickMode(question, turns) {
+function pickMode(question, turns, where) {
   const q = question.toLowerCase();
   const w = {};
   for (const k in MODES) w[k] = MODES[k].base;
@@ -135,6 +135,9 @@ function pickMode(question, turns) {
   if (isQuestion) { w.answer += 12; w.fact += 5; w.dismissal -= 4; }
   if (aboutFood) { w.misread += 14; w.answer += 5; }
   if (veryShort) { w.dismissal += 7; w.misread += 6; w.answer -= 8; }
+
+  if (where === "park") { w.distracted += 12; w.dismissal += 6; w.answer -= 4; }
+  if (where === "mind") { w.introspection += 16; w.distracted -= 6; }
 
   // deeper into a conversation, dodging every turn stops being a bit
   if (turns >= 1) { w.answer += 14; w.misread -= 5; w.dismissal -= 4; w.agreement -= 3; }
@@ -163,9 +166,19 @@ function validate(text) {
   return null;
 }
 
-function buildTurn(modeName, fact, question, repeated) {
+const PLACE = {
+  window: "you are at the window, where you live. settled. the bird is out there.",
+  park:   "you are outside at the park right now and you dont like it. too much " +
+          "sky, too much noise, everything moves. you want to go home.",
+  mind:   "you are inside your own head right now. nothing in here is solid and " +
+          "nothing is nearby. you are slow and far away.",
+};
+
+function buildTurn(modeName, fact, question, repeated, where) {
   const m = MODES[modeName];
-  const parts = [`they said: "${question}"`];
+  const parts = [];
+  if (where && PLACE[where]) parts.push(PLACE[where] + "\n");
+  parts.push(`they said: "${question}"`);
   if (repeated) parts.push("\nthey have asked you this before in this conversation. notice that.");
   parts.push(`\nmode: ${modeName}\n${m.guide}`);
   if (modeName === "fact") {
@@ -220,10 +233,14 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: "thats a lot of questions. wait a minute." });
   }
 
-  let question = "", history = [];
+  let question = "", history = [], where = null;
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     question = String(body.question || "").trim().slice(0, MAX_QUESTION);
+    if (body.where && typeof body.where === "object") {
+      const scene = String(body.where.scene || "");
+      if (["window", "park", "mind"].includes(scene)) where = scene;
+    }
     if (Array.isArray(body.history)) {
       history = body.history.slice(-MAX_HISTORY)
         .filter(t => t && t.q && t.a)
@@ -235,7 +252,7 @@ export default async function handler(req, res) {
   if (!question) return res.status(400).json({ error: "type something first." });
 
   const repeated = history.some(t => t.q.toLowerCase().trim() === question.toLowerCase().trim());
-  const modeName = pickMode(question, history.length);
+  const modeName = pickMode(question, history.length, where);
   const fact = FACTS[Math.floor(Math.random() * FACTS.length)];
 
   // real dialogue turns, so cark can actually follow up
@@ -244,7 +261,7 @@ export default async function handler(req, res) {
     messages.push({ role: "user", content: t.q });
     messages.push({ role: "assistant", content: t.a });
   }
-  messages.push({ role: "user", content: buildTurn(modeName, fact, question, repeated) });
+  messages.push({ role: "user", content: buildTurn(modeName, fact, question, repeated, where) });
 
   let answer = null;
   const said = new Set(history.map(t => t.a.toLowerCase().trim()));

@@ -126,10 +126,38 @@ adds `.fallback` to the pen. Rendering also pauses via IntersectionObserver when
 the section scrolls out of view, so the canvas costs nothing while someone is
 reading the cat mind entries.
 
-**Copy** lives in `LINES` in `index.html`, ordered by patience remaining, so the
-first pet gets `prrp` and the sixth gets `im going to bite you in a minute`. Index
-0 is the friendliest and the last entry is what it says forever after. State is in
-memory only, so a reload resets it.
+## where cark is, is how cark is
+
+The three backgrounds are not decoration. Each one is a mood with its own patience,
+its own body language, and its own reasons to leave. `MOOD` in `index.html` holds
+the copy and the numbers, `TEMPER` in `cat3d.js` holds the animation.
+
+| | mood | alone until it wanders | pets it tolerates | feeding |
+|---|---|---|---|---|
+| by the window | watchful | 3.3 min | 12 | calms it a lot |
+| the park | on edge | 0.9 min | 5 | calms it a little |
+| its own mind | somewhere else | 5.6 min | 7 | makes it worse |
+
+Food not working in its own head is the point. There is no food in there and cark
+knows it: *thats a picture of food*.
+
+**Restlessness** ticks up every second at a rate set by the place, jumps when you
+bother it, and drops when you feed it. When it crosses the threshold cark says
+where it is going and goes. You do not get a vote.
+
+Where it goes depends on why it left. Played with twice, it goes to its own head.
+Bothered four times, same. In the park it always goes home, because it always wants
+to go home. From its own head it surfaces at the window.
+
+**Body language** follows. At the park it breathes fast, its tail lashes at three
+times the window rate, and it glances around every 1.3 seconds. In its own head it
+barely moves and looks around every 7.5 seconds.
+
+**The ask section knows too.** The current scene rides along with each question, so
+cark in the park is 17% likely to be too distracted to answer, and cark in its own
+head is nearly twice as introspective as anywhere else.
+
+State is in memory only, so a reload puts it back at the window.
 
 ## ambient meows
 
