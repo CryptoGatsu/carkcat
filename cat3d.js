@@ -188,6 +188,153 @@ window.CarkCat = (function () {
     scene.add(cat);
   }
 
+  /* ---------------------------------------------------------------- scenes
+   * Backgrounds are drawn as flat white bars and arcs rather than outlined
+   * solids. At this distance an inverted hull reads as a fat smudge, while a
+   * solid thin bar reads as a chalk stroke, which is what these are.
+   * Sparse on purpose. The page is mostly empty and the pen should be too.
+   */
+  var scenes = {}, sceneName = "window", drifters = [];
+
+  function bar(w, h, d) {
+    return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat.solid);
+  }
+
+  function bird(scale) {
+    var g = new THREE.Group();
+    [-1, 1].forEach(function (s) {
+      var wing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.16, 0.016, 5, 10, Math.PI * 0.8), mat.solid);
+      wing.position.x = s * 0.14;
+      wing.rotation.z = Math.PI + s * 0.35;
+      g.add(wing);
+    });
+    g.scale.setScalar(scale || 1);
+    return g;
+  }
+
+  function drift(obj, fn) { drifters.push({ obj: obj, fn: fn }); }
+
+  function buildScenes() {
+    var T = 0.028;   // stroke thickness for all background linework
+
+    /* ---- by the window ---- */
+    var win = new THREE.Group();
+    var fw = 3.2, fh = 2.5, fz = -2.6;
+    win.add(Object.assign(bar(fw, T, T), { position: new THREE.Vector3(0, fh / 2, fz) }));
+    win.add(Object.assign(bar(fw, T, T), { position: new THREE.Vector3(0, -fh / 2, fz) }));
+    win.add(Object.assign(bar(T, fh, T), { position: new THREE.Vector3(-fw / 2, 0, fz) }));
+    win.add(Object.assign(bar(T, fh, T), { position: new THREE.Vector3(fw / 2, 0, fz) }));
+    win.add(Object.assign(bar(T, fh, T), { position: new THREE.Vector3(0, 0, fz) }));
+    win.add(Object.assign(bar(fw, T, T), { position: new THREE.Vector3(0, 0.15, fz) }));
+    /* sill, sitting nearer the camera so the cat reads as in front of the glass */
+    win.add(Object.assign(bar(fw + 0.5, T * 1.6, 0.24),
+            { position: new THREE.Vector3(0, -fh / 2 - 0.16, fz + 0.3) }));
+
+    var b1 = bird(0.9);
+    b1.position.set(-0.9, 0.85, fz - 0.5);
+    win.add(b1);
+    drift(b1, function (t) {
+      b1.position.x = -0.9 + Math.sin(t * 0.28) * 0.55;
+      b1.position.y = 0.85 + Math.sin(t * 0.45) * 0.13;
+    });
+    scenes.window = win;
+
+    /* ---- in the mind: things cark thinks about, adrift and unresolved ---- */
+    var mind = new THREE.Group();
+
+    var boxThing = part(new THREE.BoxGeometry(0.62, 0.5, 0.62), 0.31, { halo: false });
+    boxThing.position.set(-1.5, 0.75, -2.9);
+    mind.add(boxThing);
+    drift(boxThing, function (t) {
+      boxThing.rotation.y = t * 0.22;
+      boxThing.rotation.x = Math.sin(t * 0.31) * 0.3;
+      boxThing.position.y = 0.75 + Math.sin(t * 0.4) * 0.18;
+    });
+
+    var fish = new THREE.Group();
+    var fbody = part(new THREE.SphereGeometry(0.2, 10, 8), 0.2, { halo: false });
+    fbody.scale.set(1.5, 0.85, 0.6);
+    var ftail = part(new THREE.ConeGeometry(0.15, 0.24, 4), 0.15, { halo: false });
+    ftail.position.x = -0.36;
+    ftail.rotation.z = Math.PI / 2;
+    fish.add(fbody, ftail);
+    fish.position.set(1.5, -0.35, -2.6);
+    mind.add(fish);
+    drift(fish, function (t) {
+      fish.position.x = 1.4 + Math.sin(t * 0.24) * 0.45;
+      fish.position.y = -0.35 + Math.sin(t * 0.37) * 0.22;
+      fish.rotation.z = Math.sin(t * 0.37) * 0.18;
+      fish.rotation.y = Math.sin(t * 0.24) * 0.4;
+    });
+
+    /* the window turns up in here too, because of course it does */
+    var ghost = new THREE.Group();
+    var gw = 1.05, gh = 0.85;
+    [[0, gh / 2, gw, T], [0, -gh / 2, gw, T], [-gw / 2, 0, T, gh], [gw / 2, 0, T, gh]]
+      .forEach(function (v) {
+        ghost.add(Object.assign(bar(v[2], v[3], T),
+          { position: new THREE.Vector3(v[0], v[1], 0) }));
+      });
+    ghost.position.set(0.35, 1.0, -3.4);
+    mind.add(ghost);
+    drift(ghost, function (t) {
+      ghost.rotation.y = Math.sin(t * 0.19) * 0.6;
+      ghost.rotation.z = Math.sin(t * 0.13) * 0.12;
+    });
+
+    /* loose dust, the only thing in here with no shape at all */
+    for (var i = 0; i < 22; i++) {
+      var d = new THREE.Mesh(new THREE.SphereGeometry(0.022, 5, 4), mat.solid);
+      d.material = new THREE.MeshBasicMaterial({
+        color: CHALK, transparent: true, opacity: 0.18 + Math.random() * 0.3 });
+      d.position.set((Math.random() - 0.5) * 5.5, (Math.random() - 0.5) * 3.4,
+                     -1.8 - Math.random() * 2.4);
+      mind.add(d);
+      (function (dot, seed) {
+        drift(dot, function (t) { dot.position.y += Math.sin(t * 0.5 + seed) * 0.0012; });
+      })(d, i);
+    }
+    scenes.mind = mind;
+
+    /* ---- at the park. cark has never been outside, so this is a guess ---- */
+    var park = new THREE.Group();
+    park.add(Object.assign(bar(9, T, T), { position: new THREE.Vector3(0, -1.32, -2.2) }));
+
+    var trunk = part(new THREE.CylinderGeometry(0.1, 0.14, 1.5, 8), 0.12,
+                     { radial: true, half: 0.75, halo: false });
+    trunk.position.set(-2.05, -0.6, -3.1);
+    park.add(trunk);
+    var canopy = part(new THREE.SphereGeometry(0.78, 12, 9), 0.78, { halo: false });
+    canopy.position.set(-2.05, 0.5, -3.1);
+    canopy.scale.set(1, 0.82, 0.8);
+    park.add(canopy);
+    drift(canopy, function (t) { canopy.rotation.z = Math.sin(t * 0.5) * 0.022; });
+
+    [[2.15, -3.0, 0.42], [2.85, -3.4, 0.3]].forEach(function (v) {
+      var bush = part(new THREE.SphereGeometry(v[2], 10, 8), v[2], { halo: false });
+      bush.position.set(v[0], -1.32 + v[2] * 0.55, v[1]);
+      bush.scale.set(1.3, 0.8, 1);
+      park.add(bush);
+    });
+
+    [[0.5, 1.25, -3.8, 0.62], [1.15, 1.5, -4.1, 0.45]].forEach(function (v, i) {
+      var bb = bird(v[3]);
+      bb.position.set(v[0], v[1], v[2]);
+      park.add(bb);
+      drift(bb, function (t) {
+        bb.position.x = v[0] + Math.sin(t * 0.2 + i * 2) * 0.8;
+        bb.position.y = v[1] + Math.sin(t * 0.35 + i) * 0.12;
+      });
+    });
+    scenes.park = park;
+
+    for (var k in scenes) {
+      scenes[k].visible = (k === sceneName);
+      scene.add(scenes[k]);
+    }
+  }
+
   function buildProps() {
     toy = new THREE.Group();
     var core = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), mat.solid);
@@ -211,6 +358,130 @@ window.CarkCat = (function () {
     scene.add(bowl);
   }
 
+
+  /* ---------------------------------------------------------------- scenes
+     Line work only, sitting behind the cat at low opacity so it reads as a
+     backdrop rather than competing with it. Same chalk white, no new colors. */
+
+  var scenes = {}, activeScene = "window";
+
+  function strokeMat(op) {
+    return new THREE.LineBasicMaterial({ color: CHALK, transparent: true, opacity: op });
+  }
+
+  function poly(pts, op, close) {
+    var v = pts.map(function (p) { return new THREE.Vector3(p[0], p[1], p[2] || 0); });
+    if (close) v.push(v[0].clone());
+    var g = new THREE.BufferGeometry().setFromPoints(v);
+    return new THREE.Line(g, strokeMat(op));
+  }
+
+  function ring(r, op, seg) {
+    var pts = [];
+    seg = seg || 40;
+    for (var i = 0; i <= seg; i++) {
+      var a = (i / seg) * Math.PI * 2;
+      pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+    }
+    return poly(pts, op);
+  }
+
+  function buildScenes() {
+    /* ---- inside, by the window ---- */
+    var w = new THREE.Group();
+    w.add(poly([[-1.45, 1.85], [1.45, 1.85], [1.45, -0.55], [-1.45, -0.55]], 0.3, true));
+    w.add(poly([[0, 1.85], [0, -0.55]], 0.22));
+    w.add(poly([[-1.45, 0.65], [1.45, 0.65]], 0.22));
+    w.add(poly([[-1.75, -0.62], [1.75, -0.62]], 0.28));           // sill
+    w.add(poly([[-2.6, -1.5], [2.6, -1.5]], 0.16));               // floor
+    /* a bird out there, forever */
+    var bird = new THREE.Group();
+    bird.add(poly([[-0.12, 0], [0, 0.09], [0.12, 0]], 0.34));
+    bird.position.set(0.82, 1.28, 0);
+    w.add(bird);
+    w.userData.bird = bird;
+    w.position.z = -2.2;
+    scenes.window = w;
+
+    /* ---- outside, at the park ---- */
+    var p = new THREE.Group();
+    p.add(poly([[-3.2, -1.5], [3.2, -1.5]], 0.28));               // ground
+    p.add(poly([[-3.2, -0.72], [-1.9, -0.34], [-0.5, -0.68], [0.9, -0.3], [2.3, -0.66], [3.2, -0.4]], 0.13));
+    var tree = new THREE.Group();
+    tree.add(poly([[-0.11, -1.5], [-0.08, -0.35], [0.08, -0.35], [0.11, -1.5]], 0.26));
+    tree.add(poly([[-0.08, -0.5], [-0.42, -0.18]], 0.2));
+    tree.add(poly([[0.08, -0.42], [0.4, -0.05]], 0.2));
+    var canopy = ring(0.62, 0.26, 26);
+    canopy.position.y = 0.35;
+    canopy.scale.set(1.25, 0.85, 1);
+    tree.add(canopy);
+    tree.position.set(-2.1, 0, 0);
+    p.add(tree);
+    var sun = ring(0.34, 0.18, 30);
+    sun.position.set(2.2, 1.5, 0);
+    p.add(sun);
+    for (var i = 0; i < 11; i++) {
+      var x = -3 + i * 0.58 + Math.random() * 0.2;
+      p.add(poly([[x, -1.5], [x + 0.05, -1.32], [x + 0.11, -1.5]], 0.13));
+    }
+    p.position.z = -2.4;
+    scenes.park = p;
+
+    /* ---- in the mind of cark ---- */
+    var m = new THREE.Group();
+    var drifters = [];
+    for (var j = 0; j < 7; j++) {
+      var r2 = 0.28 + Math.random() * 0.85;
+      var o = ring(r2, 0.07 + Math.random() * 0.09, 24);
+      o.position.set((Math.random() - 0.5) * 5.2, (Math.random() - 0.5) * 3.6,
+                     -1.2 - Math.random() * 2.4);
+      o.rotation.z = Math.random() * Math.PI;
+      o.userData.spin = (Math.random() - 0.5) * 0.22;
+      o.userData.bob = Math.random() * 6.28;
+      m.add(o);
+      drifters.push(o);
+    }
+    /* fragments of the other two rooms, half remembered */
+    var ghostWindow = poly([[-0.7, 0.95], [0.7, 0.95], [0.7, -0.35], [-0.7, -0.35]], 0.09, true);
+    ghostWindow.position.set(-1.9, 0.5, -2.6);
+    ghostWindow.rotation.y = 0.5;
+    m.add(ghostWindow); drifters.push(ghostWindow);
+    ghostWindow.userData.spin = 0.05; ghostWindow.userData.bob = 2;
+
+    for (var k = 0; k < 26; k++) {
+      var d = poly([[0, 0], [0.001, 0.001]], 0.3);
+      d.position.set((Math.random() - 0.5) * 6.4, (Math.random() - 0.5) * 4.4, -0.8 - Math.random() * 3);
+      m.add(d);
+    }
+    var horizon = poly([[-3.4, -1.35], [3.4, -1.35]], 0.1);
+    horizon.position.z = -2.8;
+    m.add(horizon);
+    m.userData.drifters = drifters;
+    scenes.mind = m;
+
+    for (var name in scenes) {
+      scenes[name].visible = name === activeScene;
+      scene.add(scenes[name]);
+    }
+  }
+
+  function animateScene(t) {
+    var w = scenes.window;
+    if (w && w.visible && w.userData.bird) {
+      var b = w.userData.bird;
+      b.position.x = 0.6 + Math.sin(t * 0.35) * 0.75;
+      b.position.y = 1.28 + Math.sin(t * 0.9) * 0.12;
+    }
+    var m = scenes.mind;
+    if (m && m.visible) {
+      m.userData.drifters.forEach(function (o, i) {
+        o.rotation.z += o.userData.spin * 0.01;
+        o.position.y += Math.sin(t * 0.4 + o.userData.bob) * 0.0012;
+        o.material.opacity = 0.06 + Math.abs(Math.sin(t * 0.25 + i)) * 0.09;
+      });
+    }
+  }
+
   function resize() {
     if (!container) return;
     var w = container.clientWidth, h = container.clientHeight;
@@ -231,6 +502,12 @@ window.CarkCat = (function () {
 
     var t = clock.getElapsedTime();
     if (stateUntil && t > stateUntil && state !== "sleep") { state = "idle"; stateUntil = 0; }
+
+    for (var d = 0; d < drifters.length; d++) {
+      if (drifters[d].obj.parent && drifters[d].obj.parent.visible) drifters[d].fn(t);
+    }
+
+    animateScene(t);
 
     var breath = Math.sin(t * 1.4) * 0.011;
     cat.scale.set(1 + breath, 1 - breath, 1 + breath);
@@ -353,6 +630,8 @@ window.CarkCat = (function () {
 
       buildCat();
       buildProps();
+      buildScenes();
+      buildScenes();
       resize();
       bindDrag(renderer.domElement);
       window.addEventListener("resize", resize);
@@ -368,6 +647,22 @@ window.CarkCat = (function () {
       frame();
       return true;
     },
+    setScene: function (name) {
+      if (!scenes[name]) return false;
+      sceneName = name;
+      for (var k in scenes) scenes[k].visible = (k === name);
+      return true;
+    },
+    scene: function () { return sceneName; },
+
+    setScene: function (name) {
+      if (!scenes[name]) return;
+      activeScene = name;
+      for (var k in scenes) scenes[k].visible = (k === name);
+      /* the mind has no floor, so cark floats a little there */
+      cat.position.z = name === "mind" ? -0.1 : 0;
+    },
+
     pet:  function () { setState("purr", 1.6); },
     feed: function () { bowl.visible = true; setState("eat", 2.4); },
     play: function () {

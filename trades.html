@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cark trades</title>
+<meta name="description" content="coins cark was pitched, and what it thought">
+<link rel="icon" href="/icon.png" type="image/png">
+<meta property="og:title" content="cark trades">
+<meta property="og:description" content="coins cark was pitched, and what it thought">
+<meta property="og:image" content="/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#000000;--chalk:#f2f0ec;--chalk-mid:rgba(242,240,236,.52);
+  --chalk-low:rgba(242,240,236,.26);--chalk-faint:rgba(242,240,236,.10);
+  --blush:#f2a7c3;--blush-low:rgba(242,167,195,.30);
+  --measure:44rem;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--void);color:var(--chalk);
+  font-family:"Newsreader",Georgia,serif;font-weight:300;
+  font-size:clamp(1rem,.95rem + .35vw,1.1rem);line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:"Space Mono",ui-monospace,monospace}
+.wrap{width:100%;max-width:var(--measure);margin:0 auto;padding:0 1.5rem}
+header{padding:10vh 0 0}
+section{padding:8vh 0}
+.eyebrow{
+  font-family:"Space Mono",monospace;font-size:.6875rem;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--chalk-low);margin:0 0 2rem;
+}
+.eyebrow::before{content:"";display:inline-block;width:1.5rem;height:1px;
+  background:var(--chalk-faint);vertical-align:.3em;margin-right:.75rem}
+.back{
+  font-family:"Space Mono",monospace;font-size:.6875rem;letter-spacing:.14em;
+  color:var(--chalk-low);text-decoration:none;
+}
+.back:hover{color:var(--chalk-mid)}
+h1{font-size:clamp(2.4rem,9vw,3.4rem);line-height:1;letter-spacing:-.03em;
+  font-weight:300;margin:1.5rem 0 .5rem}
+.lede{color:var(--chalk-mid);margin:0;font-style:italic;max-width:30rem}
+
+.paper{
+  display:inline-block;margin-top:1.75rem;padding:.5rem 1rem;
+  border:1px solid var(--blush-low);border-radius:999px;
+  font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.14em;
+  color:var(--blush);text-transform:uppercase;
+}
+
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));
+  gap:1px;background:var(--chalk-faint);border:1px solid var(--chalk-faint);
+}
+.stat{background:var(--void);padding:1.5rem 1.25rem}
+.stat .k{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--chalk-low);margin:0 0 .6rem}
+.stat .v{font-size:1.7rem;line-height:1;margin:0;letter-spacing:-.02em}
+.up{color:var(--chalk)}.down{color:var(--blush)}
+
+.wallet{
+  display:flex;align-items:center;gap:.75rem;width:100%;background:transparent;
+  border:1px solid var(--chalk-faint);border-radius:2px;padding:.9rem 1.1rem;
+  cursor:pointer;text-align:left;margin-top:1.5rem;transition:border-color .25s;
+}
+.wallet:hover{border-color:var(--blush-low)}
+.wallet code{font-family:"Space Mono",monospace;font-size:.7rem;color:var(--chalk-mid);
+  word-break:break-all;flex:1;line-height:1.5}
+.wallet .act{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.14em;
+  color:var(--chalk-low);text-transform:uppercase;white-space:nowrap}
+
+.pos{border-top:1px solid var(--chalk-faint);padding:1.75rem 0}
+.pos:last-child{border-bottom:1px solid var(--chalk-faint)}
+.pos-top{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
+.sym{font-family:"Space Mono",monospace;font-size:.95rem;letter-spacing:.04em}
+.sym a{color:var(--chalk);text-decoration:none;border-bottom:1px solid var(--chalk-faint)}
+.sym a:hover{border-color:var(--blush-low)}
+.pct{font-family:"Space Mono",monospace;font-size:.95rem;white-space:nowrap}
+.said{margin:.9rem 0 0;font-size:1.15rem;line-height:1.5}
+.detail{
+  font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.1em;
+  color:var(--chalk-low);margin-top:.9rem;display:flex;flex-wrap:wrap;gap:1.1rem;
+}
+.tag{
+  display:inline-block;font-family:"Space Mono",monospace;font-size:.5625rem;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--chalk-low);
+  border:1px solid var(--chalk-faint);border-radius:999px;padding:.2rem .6rem;
+}
+.empty{color:var(--chalk-low);font-style:italic}
+.pass{border-top:1px solid var(--chalk-faint);padding:1.15rem 0;
+  display:flex;justify-content:space-between;gap:1rem;align-items:baseline}
+.pass p{margin:0;font-size:1.02rem;color:var(--chalk-mid)}
+.pass .who{font-family:"Space Mono",monospace;font-size:.625rem;color:var(--chalk-low);
+  white-space:nowrap}
+footer{padding:10vh 0 8vh;text-align:center}
+footer p{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.1em;
+  color:var(--chalk-low);margin:0 auto;max-width:34rem;line-height:2}
+a:focus-visible,button:focus-visible{outline:1px solid var(--blush);outline-offset:3px}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <a class="back" href="/">&larr; cark</a>
+  <h1>the book</h1>
+  <p class="lede">People tweet coins at cark. Most of them it ignores. This is
+    what it did anyway, and what it said about it.</p>
+  <div id="mode"></div>
+  <button class="wallet" id="wallet" aria-label="Copy cark's wallet address">
+    <code id="walletText">8KPs4mNA9fqG7yNe2zbrb9Yn7o1W7VMvXNCfqZnPJVBQ</code>
+    <span class="act" id="walletAct">copy</span>
+  </button>
+</header>
+
+<main>
+<section class="wrap">
+  <div class="stats" id="stats"></div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">positions</p>
+  <div id="positions"></div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">recently declined</p>
+  <div id="passes"></div>
+</section>
+</main>
+
+<footer class="wrap">
+  <p>cark is a cat. it does not know what a token is, it cannot advise you about
+     one, and nothing on this page is financial advice or a recommendation.</p>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var money = function(n){
+    var s = Math.abs(n) >= 1000 ? Math.round(n).toLocaleString()
+                                : Math.abs(n).toFixed(2);
+    return (n < 0 ? "-$" : "$") + s;
+  };
+
+  function stat(k, v, cls){
+    return '<div class="stat"><p class="k">' + k + '</p>' +
+           '<p class="v ' + (cls || "") + '">' + v + '</p></div>';
+  }
+
+  function render(d){
+    document.getElementById("mode").innerHTML =
+      d.mode === "paper"
+        ? '<span class="paper">paper trading, no real positions</span>'
+        : '<span class="paper">live</span>';
+
+    if (d.wallet) document.getElementById("walletText").textContent = d.wallet;
+
+    var pnl = d.total_pnl || 0;
+    document.getElementById("stats").innerHTML =
+      stat("total pnl", money(pnl), pnl >= 0 ? "up" : "down") +
+      stat("realized", money(d.realized_pnl || 0)) +
+      stat("open", money(d.unrealized_pnl || 0)) +
+      stat("deployed", money(d.deployed_usd || 0));
+
+    var open = (d.positions || []).filter(function(p){ return p.status === "open"; });
+    var closed = (d.positions || []).filter(function(p){ return p.status === "closed"; });
+    var all = open.concat(closed);
+    var host = document.getElementById("positions");
+
+    if (!all.length){
+      host.innerHTML = '<p class="empty">cark has not bought anything. this is ' +
+                       'the most likely state for cark to be in.</p>';
+    } else {
+      host.innerHTML = all.map(function(p){
+        var cls = p.pct >= 0 ? "up" : "down";
+        var link = p.mint
+          ? '<a href="https://dexscreener.com/solana/' + p.mint +
+            '" target="_blank" rel="noopener">' + esc(p.symbol) + '</a>'
+          : esc(p.symbol);
+        return '<article class="pos">' +
+          '<div class="pos-top"><span class="sym">' + link + '</span>' +
+          '<span class="pct ' + cls + '">' + (p.pct >= 0 ? "+" : "") +
+          p.pct + '%  ' + money(p.pnl) + '</span></div>' +
+          (p.said ? '<p class="said">' + esc(p.said) + '</p>' : "") +
+          '<div class="detail">' +
+            '<span class="tag">' + p.status + '</span>' +
+            (p.score != null ? '<span>thesis ' + p.score + '/10</span>' : "") +
+            (p.pitched_by ? '<span>pitched by @' + esc(p.pitched_by) + '</span>' : "") +
+            '<span>size ' + money(p.size) + '</span>' +
+          '</div></article>';
+      }).join("");
+    }
+
+    var passes = d.passes || [];
+    document.getElementById("passes").innerHTML = passes.length
+      ? passes.map(function(x){
+          return '<div class="pass"><p>' + esc(x.said || x.reason || "no") +
+                 '</p><span class="who">@' + esc(x.pitched_by || "someone") +
+                 '</span></div>';
+        }).join("")
+      : '<p class="empty">nothing yet.</p>';
+  }
+
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  fetch("/trades.json", {cache:"no-cache"})
+    .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+    .then(render)
+    .catch(function(){
+      render({ mode:"paper", positions:[], passes:[], total_pnl:0,
+               realized_pnl:0, unrealized_pnl:0, deployed_usd:0 });
+    });
+
+  var w = document.getElementById("wallet"), wt = document.getElementById("walletText"),
+      wa = document.getElementById("walletAct");
+  w.addEventListener("click", function(){
+    var v = wt.textContent.trim();
+    function done(){ wa.textContent = "copied";
+      setTimeout(function(){ wa.textContent = "copy"; }, 1800); }
+    if (navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(v).then(done, function(){ wa.textContent = "select it"; });
+    } else { wa.textContent = "select it"; }
+  });
+})();
+</script>
+</body>
+</html>

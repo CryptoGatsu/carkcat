@@ -147,7 +147,18 @@ section:first-of-type{padding-top:11vh}
   100%{opacity:0;transform:translateY(-52px) scale(1)}
 }
 
-.actions{display:flex;gap:.6rem;margin-top:1.25rem;flex-wrap:wrap}
+.scenes{display:flex;gap:0;margin-top:.9rem;border:1px solid var(--chalk-faint);
+  border-radius:2px;overflow:hidden}
+.scene{
+  flex:1;background:transparent;border:0;border-right:1px solid var(--chalk-faint);
+  color:var(--chalk-low);font-family:"Space Mono",monospace;font-size:.625rem;
+  letter-spacing:.1em;padding:.7rem .3rem;cursor:pointer;
+  transition:color .3s,background .3s;
+}
+.scene:last-child{border-right:0}
+.scene:hover{color:var(--chalk-mid)}
+.scene.on{color:var(--chalk);background:rgba(242,240,236,.045)}
+.actions{display:flex;gap:.6rem;margin-top:.75rem;flex-wrap:wrap}
 .actions .btn{flex:1;min-width:5.5rem}
 .says{margin-top:1.5rem;min-height:1.8rem;font-size:1.15rem;
   color:var(--chalk-mid);font-style:italic}
@@ -240,6 +251,11 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     <div class="stage" id="stage"></div>
     <img class="pet-cat" id="petCat" src="/cark.webp" alt="cark" draggable="false" hidden>
   </div>
+  <div class="scenes" role="group" aria-label="Where cark is">
+    <button class="scene on" data-scene="window">by the window</button>
+    <button class="scene" data-scene="park">the park</button>
+    <button class="scene" data-scene="mind">its own mind</button>
+  </div>
   <div class="actions">
     <button class="btn" data-act="pet">pet</button>
     <button class="btn" data-act="feed">feed</button>
@@ -266,6 +282,7 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
   <div class="links">
     <a href="https://x.com/carkcatmeow" target="_blank" rel="noopener">x</a>
     <a href="https://dexscreener.com/solana/vtogs4xulm59uu6wqwda2pgecxj7rsfkpkqgbakvjwb" target="_blank" rel="noopener">chart</a>
+    <a href="/trades.html">the book</a>
   </div>
 </section>
 
@@ -450,6 +467,24 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
       locked = false;
     }, DURATION[name]);
   }
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-scene]"), function(b){
+    b.addEventListener("click", function(){
+      Array.prototype.forEach.call(document.querySelectorAll("[data-scene]"), function(o){
+        o.classList.toggle("on", o === b);
+      });
+      var name = b.getAttribute("data-scene");
+      if (use3d) window.CarkCat.setScene(name);
+      speak(SCENE_LINES[name]);
+      wake();
+    });
+  });
+
+  var SCENE_LINES = {
+    window: "this is where i live. the bird is out there",
+    park: "im outside. i dont like it. im staying",
+    mind: "theres nothing in here. thats not a complaint"
+  };
 
   Array.prototype.forEach.call(document.querySelectorAll("[data-act]"), function(b){
     b.addEventListener("click", function(){ act(b.getAttribute("data-act")); });
