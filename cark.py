@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 
 from facts import CAT_FACTS
 from imagery import build_image_prompt, SCENES
+from companies import COMPANIES, find_company
 
 try:
     from openai import OpenAI
@@ -290,6 +291,47 @@ MODES = {
         ],
     },
 
+    "catnip": {
+        "weight": {"original": 7, "reply": 6},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "catnip. it is the only thing you have ever wanted and you are not "
+                 "embarrassed about it. you do not explain what it is or how it works. "
+                 "you either want it, are on it, or have just lost it. never ask anyone "
+                 "for it directly, that is beneath you, but make it extremely obvious.",
+        "examples": [
+            "i know theres some in the drawer. i know exactly which drawer",
+            "the good green. thats all im going to say about it",
+            "someone put it away. i watched them do it. i remember",
+            "i can smell it from here and nobody is doing anything about that",
+            "i had some. i dont want to talk about what happened",
+            "it doesnt work on me anymore. it will later. im waiting",
+        ],
+    },
+
+    "company": {
+        "weight": {"original": 9, "reply": 7},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "you have been told what a company makes. react to the OBJECT, never to "
+                 "the company. you do not know what a company is and you are not going to "
+                 "work it out. say one flat thing about the physical item as it relates to "
+                 "you: whether it is warm, whether you can sit on it, whether it is loud, "
+                 "whether there is anything in it for a cat. never mention money, markets, "
+                 "value, or whether anything is going anywhere. you dont have a view on "
+                 "that and you couldnt form one.",
+        "examples": [
+            "nvidia makes the part that gets hot. thats the good part. everything else about it is nothing to me",
+            "apple makes the warm flat one. it gets upset when i lie on it",
+            "amazon sends boxes. sometimes theres a thing inside. i dont need the thing",
+            "tesla makes a car you cant hear coming. thats a problem for me specifically",
+            "the round one that cleans the floor by itself. we have an arrangement. neither of us is happy",
+            "ive been looking for the thing berkshire hathaway makes. i cant find it",
+        ],
+    },
+
     # ---- reply modes that leave the door open -----------------------------
     # gork keeps threads going because it is askable and because it is wrong in
     # ways people cannot let stand. neither works if cark always closes.
@@ -417,12 +459,16 @@ def modes_for(context):
             if context in MODES[n].get("contexts", {"original", "reply"})]
 
 
-def pick_mode(context="original", exclude=None):
+def pick_mode(context="original", exclude=None, crave=0.0, phase="fine"):
     names, weights = [], []
     for n in modes_for(context):
         if exclude and n in exclude:
             continue
         w = mode_weight(n, context)
+        if n == "catnip":
+            # a craving cat talks about one thing. a high one talks of nothing else.
+            w = w * (1 + crave * 3) if phase == "fine" else \
+                w * (6 if phase == "high" else 2 if phase == "crash" else 1.5)
         if w > 0:
             names.append(n)
             weights.append(w)
@@ -437,6 +483,19 @@ def build_prompt(mode_name, fact=None, mention=None, ctx=None):
     ex = random.sample(mode["examples"], min(3, len(mode["examples"])))
 
     parts = []
+    nip = (ctx or {}).get("nip", "fine")
+    if nip in NIP_LINES:
+        parts.append(NIP_LINES[nip] + "\n")
+
+    if mode_name == "company":
+        c = (ctx or {}).get("company") or random.choice(COMPANIES)
+        parts.append(f"the company is {c['n']}. what it actually makes, and this is "
+                     f"true: it {c['thing']}.\n"
+                     f"the angle for you: {c['cat']}.\n")
+        if c.get("opaque"):
+            parts.append("there is no physical object here at all. you are allowed to "
+                         "simply not find it. that is the whole reply.\n")
+        parts.append("say the company name once, lowercase, and never say the ticker.\n")
     if mention:
         if ctx and ctx.get("parent"):
             parts.append("you got tagged under this, which is the thing everyone is "
@@ -450,6 +509,14 @@ def build_prompt(mode_name, fact=None, mention=None, ctx=None):
                          "\n".join(lines) + "\n")
             parts.append("dont repeat anything you already said. move it along.\n")
         parts.append(f'someone said this to you:\n\n"{mention}"\n')
+        if ctx and ctx.get("knows") == "known":
+            parts.append("you know this one. they turn up a lot. you have not decided "
+                         "whether you like it. dont greet them and dont say their name.\n")
+        elif ctx and ctx.get("knows") == "familiar":
+            parts.append("youve seen this one before. dont mention that you have.\n")
+        if ctx and ctx.get("asleep"):
+            parts.append("you were asleep. you are answering anyway and it shows. "
+                         "shorter than usual, less interested, slightly annoyed.\n")
         parts.append("reply to them. react to the thing they are showing you, not just "
                      "to the words. if theres a picture or a link you cant see it, so "
                      "guess wrong about it.")
@@ -867,6 +934,245 @@ def thread_context(conn, m, refs):
     return {"parent": parent, "prior": prior, "convo_id": convo_id}
 
 
+# ---------------------------------------------------------------- being alive
+
+# Cats are crepuscular. They are not "on" all day and they are not nocturnal,
+# they blow out at dawn and dusk and sleep flat through the middle of the day.
+# Everything cark does is scaled by this, so the account has a body clock rather
+# than a cron schedule.
+CIRCADIAN = {
+    0: 0.35, 1: 0.30, 2: 0.25, 3: 0.30, 4: 0.65,
+    5: 1.00, 6: 1.00, 7: 0.90, 8: 0.70,      # dawn, everything happens
+    9: 0.50, 10: 0.30, 11: 0.15, 12: 0.10,
+    13: 0.10, 14: 0.15, 15: 0.30,            # the long middle, asleep
+    16: 0.60, 17: 0.95, 18: 1.00, 19: 1.00,  # dusk, second wind
+    20: 0.90, 21: 0.75, 22: 0.60, 23: 0.45,
+}
+
+ASLEEP_BELOW = float(os.getenv("CARK_ASLEEP_BELOW", "0.18"))
+TZ_OFFSET = int(os.getenv("CARK_TZ_OFFSET", "-8"))   # cark lives on tyler's clock
+
+
+def cark_hour():
+    h = datetime.now(timezone.utc).hour + TZ_OFFSET
+    return h % 24
+
+
+def activity():
+    """0 to 1. how much cark is currently a functioning animal."""
+    return CIRCADIAN[cark_hour()]
+
+
+def is_asleep():
+    return activity() < ASLEEP_BELOW
+
+
+# needs drift on their own and get met by things happening. they are what make
+# cark do something without being asked.
+NEEDS = ("attention", "stimulation", "rest")
+
+
+def get_needs(conn):
+    return {n: float(get_state(conn, f"need_{n}", 0.4)) for n in NEEDS}
+
+
+def set_needs(conn, needs):
+    for n, v in needs.items():
+        set_state(conn, f"need_{n}", round(max(0.0, min(1.0, v)), 4))
+
+
+def drift_needs(conn, minutes):
+    """Attention builds when ignored. Stimulation drains. Rest follows the clock."""
+    needs = get_needs(conn)
+    act = activity()
+    h = minutes / 60.0
+
+    needs["attention"] += 0.09 * h
+    needs["stimulation"] -= 0.11 * h
+    needs["rest"] += (0.22 * h) if act < ASLEEP_BELOW else (-0.07 * h * act)
+    set_needs(conn, needs)
+    return needs
+
+
+def meet_need(conn, which, amount):
+    needs = get_needs(conn)
+    needs[which] = needs[which] + amount
+    set_needs(conn, needs)
+
+
+# where cark puts itself. it is not asked and it does not ask.
+def choose_place(conn):
+    needs = get_needs(conn)
+    act = activity()
+
+    if act < ASLEEP_BELOW:
+        return "window" if needs["rest"] < 0.75 else "mind"
+    if needs["stimulation"] < 0.25:
+        return "park"                       # bored enough to go outside
+    if needs["attention"] > 0.8:
+        return "window"                     # wants to be seen
+    if needs["rest"] < 0.2:
+        return "mind"                       # worn out, goes inward
+    return random.choices(["window", "park", "mind"], weights=[6, 2, 2])[0]
+
+
+def mood_word(conn):
+    needs = get_needs(conn)
+    phase, _ = nip_phase(conn)
+    if phase == "high":
+        return "on the catnip"
+    if phase == "crash":
+        return "coming down"
+    if nip_craving(conn) > 0.7:
+        return "wants the catnip"
+    if is_asleep():
+        return "asleep"
+    if needs["attention"] > 0.8:
+        return "wants something"
+    if needs["stimulation"] < 0.25:
+        return "bored"
+    if needs["rest"] < 0.2:
+        return "worn out"
+    return {"window": "watchful", "park": "on edge",
+            "mind": "somewhere else"}.get(get_state(conn, "place", "window"), "fine")
+
+
+# what the site shows. this is the whole of cark's control over the website:
+# a small json object describing where it is and what it is doing.
+def presence(conn):
+    needs = get_needs(conn)
+    place = get_state(conn, "place", "window")
+    asleep = is_asleep()
+
+    if asleep:
+        note = {"window": "asleep by the window",
+                "park": "asleep outside somehow",
+                "mind": "asleep, further in than usual"}[place]
+    elif needs["attention"] > 0.8:
+        note = {"window": "at the window, waiting for something",
+                "park": "outside, wants to be found",
+                "mind": "in its own head, wants out"}[place]
+    else:
+        note = {"window": "at the window",
+                "park": "out at the park, briefly",
+                "mind": "somewhere in its own head"}[place]
+
+    last = get_state(conn, "last_post", 0)
+    phase, _ = nip_phase(conn)
+    if phase == "high":
+        note = "somewhere on the floor, on the catnip"
+    elif phase == "crash":
+        note = "lying down, not discussing it"
+
+    return {
+        "place": place,
+        "asleep": asleep,
+        "nip": phase,
+        "craving": round(nip_craving(conn), 2),
+        "mood": mood_word(conn),
+        "note": note,
+        "activity": round(activity(), 2),
+        "hour": cark_hour(),
+        "needs": {k: round(v, 2) for k, v in needs.items()},
+        "last_post_ago_min": int((time.time() - float(last)) / 60) if last else None,
+        "updated": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def update_presence(conn, force=False):
+    """Pick a place if it is time to move, and push it to the site on change."""
+    place = get_state(conn, "place", "window")
+    moved_at = float(get_state(conn, "place_since", 0))
+    mins_here = (time.time() - moved_at) / 60 if moved_at else 999
+
+    # a settled cat stays put a while, a restless one does not
+    needs = get_needs(conn)
+    stay = 40 + needs["rest"] * 90 - needs["attention"] * 20
+    if force or mins_here > stay:
+        new = choose_place(conn)
+        if new != place:
+            log.info("cark moved to the %s (%s)", new, mood_word(conn))
+            note_event(conn, "moved", f"went to the {new}", weight=0.4)
+        set_state(conn, "place", new)
+        set_state(conn, "place_since", time.time())
+
+    publish("presence", presence(conn))
+
+
+# people who keep turning up stop being strangers
+def recognise(conn, author_id, handle):
+    row = conn.execute("SELECT replies_total FROM authors WHERE author_id = ?",
+                       (str(author_id),)).fetchone()
+    n = row[0] if row else 0
+    if n >= 12:
+        return "known"      # cark has decided about this one
+    if n >= 4:
+        return "familiar"
+    return "new"
+
+
+# ---------------------------------------------------------------- catnip
+
+# Real catnip response: two to fifteen minutes of complete abandon, then a hard
+# stop, then roughly an hour where the cat cannot respond at all no matter how
+# much you wave at it. cark is a heavy responder and the refractory period is
+# the funniest part, so all of it is modelled.
+NIP_HIGH_MIN = int(os.getenv("CARK_NIP_HIGH_MIN", "12"))
+NIP_CRASH_MIN = int(os.getenv("CARK_NIP_CRASH_MIN", "25"))
+NIP_IMMUNE_MIN = int(os.getenv("CARK_NIP_IMMUNE_MIN", "75"))
+NIP_CRAVE_PER_HOUR = float(os.getenv("CARK_NIP_CRAVE", "0.14"))
+
+
+def nip_phase(conn):
+    """fine, high, crash, immune. everything else keys off this."""
+    at = float(get_state(conn, "nip_at", 0))
+    if not at:
+        return "fine", 0
+    mins = (time.time() - at) / 60
+    if mins < NIP_HIGH_MIN:
+        return "high", mins
+    if mins < NIP_HIGH_MIN + NIP_CRASH_MIN:
+        return "crash", mins
+    if mins < NIP_HIGH_MIN + NIP_CRASH_MIN + NIP_IMMUNE_MIN:
+        return "immune", mins
+    return "fine", mins
+
+
+def nip_craving(conn):
+    """Builds from the moment the immunity wears off. Never quite satisfied."""
+    phase, mins = nip_phase(conn)
+    if phase != "fine":
+        return 0.0
+    since_clear = max(0.0, mins - (NIP_HIGH_MIN + NIP_CRASH_MIN + NIP_IMMUNE_MIN))
+    if not float(get_state(conn, "nip_at", 0)):
+        since_clear = 600          # has never had any and is not coping
+    return min(1.0, since_clear / 60 * NIP_CRAVE_PER_HOUR)
+
+
+def give_nip(conn):
+    """Something set cark off. Returns False if it physically cannot respond."""
+    phase, _ = nip_phase(conn)
+    if phase in ("high", "crash", "immune"):
+        return False
+    set_state(conn, "nip_at", time.time())
+    meet_need(conn, "stimulation", 0.9)
+    meet_need(conn, "attention", -0.2)
+    note_event(conn, "nip", "there was catnip", weight=2.2)
+    log.info("cark got into the catnip")
+    return True
+
+
+NIP_LINES = {
+    "high": "you are on catnip RIGHT NOW. you are not cool about it. you are "
+            "rolling. sentences are coming apart. you are still lowercase and "
+            "still flat in vocabulary but the grip is gone.",
+    "crash": "the catnip just wore off. you are lying somewhere and you are not "
+             "going to talk about what happened. slightly embarrassed, mostly empty.",
+    "immune": "you had catnip recently and it does nothing to you now. you know "
+              "this and it is a source of quiet grievance.",
+}
+
+
 # ---------------------------------------------------------------- cat mind
 
 # The chain is the point. Each thought is generated with the previous ones in
@@ -1258,10 +1564,36 @@ def compose(conn, ai, model, mention=None, ctx=None):
     """Pick a mode for this context, avoid repeating the last few, generate."""
     context = "reply" if mention else "original"
     exclude = set(recent_modes(conn, 3))
+    phase, _ = nip_phase(conn)
+    ctx = dict(ctx or {})
+    ctx["nip"] = phase
+
+    # somebody said the word. that outranks everything else cark had planned.
+    if mention and re.search(r"\b(catnip|nip|nepeta)\b", mention, re.I):
+        if phase == "fine":
+            give_nip(conn)
+            ctx["nip"] = "high"
+        text = generate(ai, "catnip", model, fact=None, mention=mention, ctx=ctx)
+        return "catnip", text
+
+
+    # if they named a company, that is almost certainly what they want a take on
+    named = find_company(mention) if mention else None
+    if named and random.random() < 0.7:
+        ctx = dict(ctx or {})
+        ctx["company"] = named
+        fact = None
+        text = generate(ai, "company", model, fact=None, mention=mention, ctx=ctx)
+        return "company", text
+
     # callback only makes sense when there is something to call back to
     if not (ctx and ctx.get("prior")):
         exclude.add("callback")
-    mode_name = pick_mode(context, exclude=exclude)
+    mode_name = pick_mode(context, exclude=exclude,
+                          crave=nip_craving(conn), phase=phase)
+    if mode_name == "catnip" and phase == "fine" and random.random() < 0.5:
+        give_nip(conn)          # it found some
+        ctx["nip"] = "high"
     fact = pick_fact(conn) if MODES[mode_name].get("fact") else None
     text = generate(ai, mode_name, model, fact=fact, mention=mention, ctx=ctx)
     return mode_name, text
@@ -1348,7 +1680,14 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
     if not audit:
         set_state(conn, "since_id", max(int(m.id) for m in mentions))
 
-    budget = min(MAX_REPLIES_PER_TICK, MAX_REPLIES_PER_DAY - replies_today(conn, now))
+    act = activity()
+    awake_budget = max(1, int(round(MAX_REPLIES_PER_TICK * act)))
+    if is_asleep():
+        awake_budget = 1 if random.random() < 0.35 else 0   # mostly ignores you
+    budget = min(awake_budget, MAX_REPLIES_PER_DAY - replies_today(conn, now))
+    if budget <= 0 and not audit:
+        log.info("cark is asleep, not answering")
+        return
     if budget <= 0 and not audit:
         log.info("daily reply cap reached")
         return
@@ -1381,6 +1720,8 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
         author = users.get(str(m.author_id))
         handle = getattr(author, "username", "someone") if author else "someone"
 
+        ctx["knows"] = recognise(conn, m.author_id, handle)
+        ctx["asleep"] = is_asleep()
         mode_name, text = compose(conn, ai, MODEL_REPLY, mention=body, ctx=ctx)
         try:
             resp = x.create_tweet(text=text, in_reply_to_tweet_id=m.id)
@@ -1391,6 +1732,8 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
             # a thread somebody stayed in is worth more to the diary than a ping
             note_event(conn, "conversation" if ctx.get("prior") else "replied",
                        body[:120])
+            meet_need(conn, "attention", -0.18)
+            meet_need(conn, "stimulation", 0.12)
             note_reply(conn, m.author_id, now)
             bump_replies_today(conn, now)
             log.info("replied to %s [%s]: %s", m.id, mode_name, text)
@@ -1409,6 +1752,8 @@ def tick(conn, ai, x, user_id, force=False):
         try:
             post_original(conn, ai, x)
             set_state(conn, "last_post", now)
+            meet_need(conn, "attention", -0.35)
+            meet_need(conn, "stimulation", 0.15)
         except Exception as e:
             log.error("original post failed: %s", e)
 
@@ -1424,7 +1769,9 @@ def tick(conn, ai, x, user_id, force=False):
 
     last_mention = float(get_state(conn, "last_mention", 0))
     backoff = float(get_state(conn, "mention_backoff", 1))
-    if force or now - last_mention > MENTION_EVERY_MIN * 60 * backoff:
+    # asleep cark still checks, just rarely, and mostly declines to answer
+    sleep_factor = 4.0 if asleep else 1.0
+    if force or now - last_mention > MENTION_EVERY_MIN * 60 * backoff * sleep_factor:
         handle_mentions(conn, ai, x, user_id)
         set_state(conn, "last_mention", now)
 
@@ -1444,6 +1791,11 @@ def main():
     ap.add_argument("--mind", action="store_true", help="print the whole diary")
     ap.add_argument("--diary-status", action="store_true",
                     help="how close cark is to wanting to write")
+    ap.add_argument("--nip", action="store_true", help="give cark catnip")
+    ap.add_argument("--alive", action="store_true",
+                    help="where cark is and how it is doing right now")
+    ap.add_argument("--day", action="store_true",
+                    help="print the whole 24 hour activity curve")
     ap.add_argument("--export-thoughts", metavar="PATH", nargs="?", const="",
                     help="write thoughts.json and push to the site")
     ap.add_argument("--publish", action="store_true",
@@ -1479,6 +1831,38 @@ def main():
         for n, text, created in all_thoughts(conn):
             print(f"  {n:03d}  {text}")
             print(f"       {created[:10]}\n")
+        return
+
+    if args.nip:
+        phase, mins = nip_phase(conn)
+        if give_nip(conn):
+            print("\n  cark got into the catnip\n")
+        else:
+            print(f"\n  cant. cark is {phase} ({mins:.0f} min in)\n")
+        update_presence(conn, force=True)
+        return
+
+    if args.alive:
+        update_presence(conn)
+        p = presence(conn)
+        print(f"\n  cark is {p['note']}")
+        print(f"  mood       {p['mood']}")
+        print(f"  local hour {p['hour']:02d}:00, activity {p['activity']}")
+        print(f"  needs      " + "  ".join(f"{k} {v}" for k, v in p["needs"].items()))
+        print(f"  catnip     {p['nip']}, craving {p['craving']}")
+        if p["last_post_ago_min"] is not None:
+            print(f"  last post  {p['last_post_ago_min']} min ago")
+        print()
+        return
+
+    if args.day:
+        print()
+        for h in range(24):
+            a = CIRCADIAN[h]
+            bar = "#" * int(a * 34)
+            tag = "  asleep" if a < ASLEEP_BELOW else ""
+            print(f"  {h:02d}:00  {bar:<34} {a:.2f}{tag}")
+        print()
         return
 
     if args.diary_status:

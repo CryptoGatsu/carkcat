@@ -599,6 +599,31 @@ window.CarkCat = (function () {
       head.rotation.x = -Math.atan2(toy.position.y - 0.6, 1.7) * 0.55;
     }
 
+    if (state === "nip") {
+      var left = stateUntil - t;
+      if (left > 2.0) {                       // the mania
+        var f = 1 - (left - 2.0) / 3.2;
+        cat.rotation.z = Math.sin(t * 11) * (0.9 + f * 0.5);
+        cat.rotation.x = Math.sin(t * 7.3) * 0.35;
+        cat.position.y = Math.abs(Math.sin(t * 9)) * 0.32;
+        cat.position.x = Math.sin(t * 5.5) * 0.22;
+        head.rotation.z = Math.sin(t * 13) * 0.5;
+        head.rotation.x = Math.sin(t * 8) * 0.3;
+        spinTarget += 0.045;
+        cheeks.forEach(function (c) { c.material.opacity = 1; });
+      } else {                                // the flop
+        cat.rotation.z += (1.35 - cat.rotation.z) * 0.08;
+        cat.rotation.x *= 0.9;
+        cat.position.y += (-0.34 - cat.position.y) * 0.08;
+        cat.position.x *= 0.9;
+        head.rotation.z *= 0.9;
+        head.rotation.x += (0.35 - head.rotation.x) * 0.08;
+      }
+      for (var q = 0; q < tailBones.length; q++) {
+        tailBones[q].rotation.z = (q ? 0.3 : 0) + Math.sin(t * 14 - q) * 0.4;
+      }
+    }
+
     if (state === "pounce") {
       var p = 1 - Math.max(0, (stateUntil - t) / 0.6);
       var hop = Math.sin(p * Math.PI);
@@ -713,6 +738,10 @@ window.CarkCat = (function () {
       /* the mind has no floor, so cark floats a little there */
       cat.position.z = name === "mind" ? -0.1 : 0;
     },
+
+    /* catnip: total loss of composure, then a hard stop. rolls onto its back,
+       spins, cannot hold a pose, then flops and stays flopped. */
+    nip: function () { setState("nip", 5.2); },
 
     pet:  function () { setState("purr", 1.6); },
     feed: function () { bowl.visible = true; setState("eat", 2.4); },
