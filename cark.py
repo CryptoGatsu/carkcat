@@ -93,6 +93,10 @@ DIARY_DRIFT_PER_HOUR = float(os.getenv("CARK_DIARY_DRIFT", "0.5"))
 THOUGHT_CHAIN_DEPTH = int(os.getenv("CARK_THOUGHT_CHAIN_DEPTH", "6"))
 THOUGHTS_JSON = os.getenv("CARK_THOUGHTS_JSON", "")
 
+# publishing straight to the site, no commit and no redeploy
+SITE_URL = os.getenv("CARK_SITE_URL", "").rstrip("/")
+PUBLISH_SECRET = os.getenv("CARK_PUBLISH_SECRET", "")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s %(message)s",
@@ -1068,14 +1072,46 @@ def think(conn, ai, force=False):
     return None
 
 
-def export_thoughts(conn, path):
+def thoughts_payload(conn):
     rows = all_thoughts(conn)
-    data = [{"n": r[0], "text": r[1], "date": r[2]} for r in rows]
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"thoughts": data}, f, ensure_ascii=False, indent=2)
-    log.info("exported %d thoughts to %s", len(data), path)
-    return len(data)
+    return {"thoughts": [{"n": r[0], "text": r[1], "date": r[2]} for r in rows]}
+
+
+def publish(key, payload):
+    """Push straight to the live site. Needs CARK_SITE_URL and
+    CARK_PUBLISH_SECRET, otherwise it quietly does nothing."""
+    if not (SITE_URL and PUBLISH_SECRET):
+        return False
+    try:
+        import requests
+        r = requests.post(
+            f"{SITE_URL}/api/state?k={key}",
+            json=payload,
+            headers={"x-cark-key": PUBLISH_SECRET},
+            timeout=15)
+        if r.status_code == 200:
+            log.info("published %s to the site", key)
+            return True
+        log.warning("publish %s failed: %s %s", key, r.status_code, r.text[:120])
+    except Exception as e:
+        log.warning("publish %s failed: %s", key, e)
+    return False
+
+
+def export_thoughts(conn, path=None):
+    """Write the local file if a path is set, and push to the site if it is
+    configured. Either can be on without the other."""
+    payload = thoughts_payload(conn)
+    n = len(payload["thoughts"])
+
+    if path:
+        os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        log.info("wrote %d thoughts to %s", n, path)
+
+    publish("thoughts", payload)
+    return n
 
 
 # ---------------------------------------------------------------- images
@@ -1380,8 +1416,8 @@ def tick(conn, ai, x, user_id, force=False):
     last_check = float(get_state(conn, "last_diary_check", 0))
     if force or now - last_check > 600:
         try:
-            if think(conn, ai, force=force) and THOUGHTS_JSON:
-                export_thoughts(conn, THOUGHTS_JSON)
+            if think(conn, ai, force=force):
+                export_thoughts(conn, THOUGHTS_JSON or None)
         except Exception as e:
             log.error("diary failed: %s", e)
         set_state(conn, "last_diary_check", now)
@@ -1408,8 +1444,10 @@ def main():
     ap.add_argument("--mind", action="store_true", help="print the whole diary")
     ap.add_argument("--diary-status", action="store_true",
                     help="how close cark is to wanting to write")
-    ap.add_argument("--export-thoughts", metavar="PATH",
-                    help="write thoughts.json for the website")
+    ap.add_argument("--export-thoughts", metavar="PATH", nargs="?", const="",
+                    help="write thoughts.json and push to the site")
+    ap.add_argument("--publish", action="store_true",
+                    help="push the diary to the live site, no file")
     ap.add_argument("--audit", action="store_true")
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
@@ -1459,9 +1497,16 @@ def main():
         print()
         return
 
-    if args.export_thoughts:
+    if args.publish:
         seed_thoughts(conn)
-        export_thoughts(conn, args.export_thoughts)
+        ok = publish("thoughts", thoughts_payload(conn))
+        print("published" if ok else
+              "not configured. set CARK_SITE_URL and CARK_PUBLISH_SECRET")
+        return
+
+    if args.export_thoughts is not None:
+        seed_thoughts(conn)
+        export_thoughts(conn, args.export_thoughts or None)
         return
 
     ai = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -1469,8 +1514,8 @@ def main():
     if args.think:
         text = think(conn, ai, force=True)
         print(f"\n{text or 'failed'}\n")
-        if text and THOUGHTS_JSON:
-            export_thoughts(conn, THOUGHTS_JSON)
+        if text:
+            export_thoughts(conn, THOUGHTS_JSON or None)
         return
 
     if args.sample:

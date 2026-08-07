@@ -463,7 +463,7 @@ def book(conn):
     }
 
 
-def export(conn, path):
+def export(conn, path=None):
     data = book(conn)
     data["passes"] = [
         {"mint": r[0], "pitched_by": r[1], "score": r[2], "reason": r[3],
@@ -471,10 +471,21 @@ def export(conn, path):
         for r in conn.execute(
             "SELECT mint, pitched_by, score, reason, said, created_at FROM pitches "
             "WHERE verdict='pass' ORDER BY id DESC LIMIT 20").fetchall()]
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    log.info("exported %d positions to %s", len(data["positions"]), path)
+    if path:
+        os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        log.info("wrote %d positions to %s", len(data["positions"]), path)
+
+    site, secret = os.getenv("CARK_SITE_URL", "").rstrip("/"), os.getenv("CARK_PUBLISH_SECRET", "")
+    if site and secret:
+        try:
+            r = requests.post(f"{site}/api/state?k=trades", json=data,
+                              headers={"x-cark-key": secret}, timeout=15)
+            log.info("published the book" if r.status_code == 200
+                     else f"publish failed: {r.status_code}")
+        except Exception as e:
+            log.warning("publish failed: %s", e)
     return data
 
 
@@ -543,7 +554,7 @@ def main():
     ap.add_argument("--social", metavar="MINT", help="just the social read")
     ap.add_argument("--refresh", action="store_true")
     ap.add_argument("--book", action="store_true")
-    ap.add_argument("--export", metavar="PATH")
+    ap.add_argument("--export", metavar="PATH", nargs="?", const="")
     args = ap.parse_args()
 
     conn = db()
@@ -572,8 +583,8 @@ def main():
         print(f"refreshed {refresh(conn)} positions")
         return
 
-    if args.export:
-        d = export(conn, args.export)
+    if args.export is not None:
+        d = export(conn, args.export or None)
         print(f"{len(d['positions'])} positions, total pnl ${d['total_pnl']}")
         return
 

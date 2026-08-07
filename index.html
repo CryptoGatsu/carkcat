@@ -650,13 +650,27 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     Array.prototype.forEach.call(items, function(el){ io.observe(el); });
   }
 
-  fetch("/thoughts.json", {cache:"no-cache"})
-    .then(function(r){ if(!r.ok) throw 0; return r.json(); })
-    .then(function(d){
-      var list = Array.isArray(d) ? d : d.thoughts;
-      render(list && list.length ? list : SEED);
-    })
-    .catch(function(){ render(SEED); });
+  /* live store first, committed file second, seed last. any of the three
+     renders a complete section, so a cold deploy is never empty. */
+  function loadMind(){
+    function use(d){
+      var list = Array.isArray(d) ? d : (d && d.thoughts);
+      if (!list || !list.length) throw 0;
+      render(list);
+    }
+    fetch("/api/state?k=thoughts", {cache:"no-cache"})
+      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+      .then(use)
+      .catch(function(){
+        fetch("/thoughts.json", {cache:"no-cache"})
+          .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+          .then(use)
+          .catch(function(){ render(SEED); });
+      });
+  }
+  loadMind();
+  /* pick up new entries without a reload if the tab is left open */
+  setInterval(function(){ if (!document.hidden) loadMind(); }, 120000);
 
   /* ---------- copy buttons ---------- */
   Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(btn){
