@@ -20,6 +20,8 @@ Usage:
 import os
 import re
 import time
+import base64
+import json
 import math
 import random
 import sqlite3
@@ -32,6 +34,12 @@ import tweepy
 from dotenv import load_dotenv
 
 from facts import CAT_FACTS
+from imagery import build_image_prompt, SCENES
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 load_dotenv()
 
@@ -49,17 +57,36 @@ MENTION_EVERY_MIN = float(os.getenv("CARK_MENTION_EVERY_MIN", "2"))
 MENTION_BACKOFF_MAX = float(os.getenv("CARK_MENTION_BACKOFF_MAX", "16"))
 TICK_SECONDS = int(os.getenv("CARK_TICK_SECONDS", "25"))
 
-MAX_REPLIES_PER_TICK = int(os.getenv("CARK_MAX_REPLIES_PER_TICK", "3"))
-MAX_REPLIES_PER_DAY = int(os.getenv("CARK_MAX_REPLIES_PER_DAY", "25"))
-MAX_REPLIES_PER_AUTHOR_DAY = int(os.getenv("CARK_MAX_PER_AUTHOR_DAY", "2"))
-AUTHOR_COOLDOWN_MIN = int(os.getenv("CARK_AUTHOR_COOLDOWN_MIN", "90"))
-MIN_FOLLOWERS = int(os.getenv("CARK_MIN_FOLLOWERS", "15"))
-MIN_ACCOUNT_AGE_DAYS = int(os.getenv("CARK_MIN_ACCOUNT_AGE_DAYS", "14"))
+MAX_REPLIES_PER_TICK = int(os.getenv("CARK_MAX_REPLIES_PER_TICK", "6"))
+MAX_REPLIES_PER_DAY = int(os.getenv("CARK_MAX_REPLIES_PER_DAY", "80"))
+MAX_REPLIES_PER_AUTHOR_DAY = int(os.getenv("CARK_MAX_PER_AUTHOR_DAY", "6"))
+AUTHOR_COOLDOWN_MIN = int(os.getenv("CARK_AUTHOR_COOLDOWN_MIN", "4"))
+MIN_FOLLOWERS = int(os.getenv("CARK_MIN_FOLLOWERS", "0"))
+MIN_ACCOUNT_AGE_DAYS = int(os.getenv("CARK_MIN_ACCOUNT_AGE_DAYS", "1"))
 MAX_TAGS_IN_MENTION = int(os.getenv("CARK_MAX_TAGS", "3"))
 SCORE_THRESHOLD = float(os.getenv("CARK_SCORE_THRESHOLD", "0"))
 
 HARD_MAX_CHARS = 200
 GEN_ATTEMPTS = 4
+
+# images. off unless an openai key is present.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+IMAGE_ENABLED = bool(OPENAI_API_KEY) and os.getenv("CARK_IMAGES", "1") == "1"
+IMAGE_CHANCE = float(os.getenv("CARK_IMAGE_CHANCE", "0.22"))
+IMAGE_MAX_PER_DAY = int(os.getenv("CARK_IMAGE_MAX_PER_DAY", "4"))
+IMAGE_REUSE_CHANCE = float(os.getenv("CARK_IMAGE_REUSE_CHANCE", "0.45"))
+IMAGE_MODEL = os.getenv("CARK_IMAGE_MODEL", "gpt-image-1")
+IMAGE_SIZE = os.getenv("CARK_IMAGE_SIZE", "1024x1024")
+IMAGE_QUALITY = os.getenv("CARK_IMAGE_QUALITY", "medium")
+MEDIA_DIR = os.getenv("CARK_MEDIA_DIR", "media")
+
+# the token. cark knows it exists and never promotes it.
+TOKEN_CA = os.getenv("CARK_TOKEN_CA", "Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump")
+
+# chained thoughts for the cat mind section on the site
+THINK_EVERY_MIN = int(os.getenv("CARK_THINK_EVERY_MIN", "360"))
+THOUGHT_CHAIN_DEPTH = int(os.getenv("CARK_THOUGHT_CHAIN_DEPTH", "6"))
+THOUGHTS_JSON = os.getenv("CARK_THOUGHTS_JSON", "")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -113,6 +140,13 @@ anything on this website. you get distracted. you fall asleep. you are frequentl
 already doing something else when someone talks to you. you have opinions about
 furniture. you knock things over and dont explain why.
 
+THE TOKEN
+there is a coin named after you. you know it exists and you do not understand it.
+you have never told anyone to buy anything and you never will. you never mention
+price, going up, going down, charts, or what anyone should do about any of it. it
+is just a confusing thing happening near you, like weather. you are not impressed
+by it and you are not worried about it.
+
 HARD BANS
 - no emoji
 - no hashtags
@@ -131,7 +165,7 @@ HARD BANS
 #   no_abstract  post is rejected for human philosophy vocabulary
 MODES = {
     "fact": {
-        "weight": {"original": 16, "reply": 26},
+        "weight": {"original": 16, "reply": 14},
         "contexts": {"original", "reply"},
         "fact": True,
         "guide": "say the fact. flat, in your own sloppy wording. no lead in, no lesson after it. "
@@ -144,7 +178,7 @@ MODES = {
         ],
     },
     "dismissal": {
-        "weight": 14,
+        "weight": {"original": 0, "reply": 8},
         "contexts": {"reply"},
         "fact": False,
         "needs_cat": False,
@@ -208,7 +242,7 @@ MODES = {
         ],
     },
     "noise_only": {
-        "weight": {"original": 6, "reply": 7},
+        "weight": {"original": 6, "reply": 4},
         "contexts": {"original", "reply"},
         "fact": False,
         "max_chars": 30,
@@ -225,6 +259,78 @@ MODES = {
             "im under the bed. cats have a floating collarbone thats attached to nothing",
             "hrrn my ear itches. theres like 32 muscles in there apparently",
             "someone moved my bowl. a group of cats is called a clowder",
+        ],
+    },
+
+    "token": {
+        "weight": {"original": 6, "reply": 4},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "no_abstract": True,
+        "guide": "mention the coin named after you without understanding it and without "
+                 "recommending anything. you have observed something about it the way a "
+                 "cat observes a washing machine. never say buy, never say price, never "
+                 "say it is going anywhere. no opinion on whether it is good.",
+        "examples": [
+            "theres a coin with my face on it. i dont know what a coin is. i cant eat it",
+            "someone showed me a red line and a green line for an hour. it moved. thats all i can report",
+            "people keep saying my name in a way that isnt about me",
+            "i have a number now apparently. nobody asked me",
+            "theres a version of me that lives in a phone and does something i dont do",
+        ],
+    },
+
+    # ---- reply modes that leave the door open -----------------------------
+    # gork keeps threads going because it is askable and because it is wrong in
+    # ways people cannot let stand. neither works if cark always closes.
+
+    "curious": {
+        "weight": {"reply": 20},
+        "contexts": {"reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "ask them one short blunt question about the thing they said. you are "
+                 "not being polite and you are not helping, you want to know because it "
+                 "confuses you. five words is plenty. dont explain why you asked.",
+        "examples": [
+            "is it warm",
+            "can you eat it",
+            "wait whose hand is that",
+            "does it have a bowl",
+            "mrrp. why though",
+            "is that inside or outside",
+        ],
+    },
+    "wrongly_certain": {
+        "weight": {"reply": 18},
+        "contexts": {"reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "state something about their thing that is confidently and specifically "
+                 "wrong. not random, wrong in a way a cat would be wrong. dont hedge, dont "
+                 "wink, dont ask. say it like it is settled and stop.",
+        "examples": [
+            "thats a dog",
+            "ive been there. it was closed",
+            "that one belongs to me actually",
+            "no thats the small kind",
+            "you can only do that in the morning",
+        ],
+    },
+    "callback": {
+        "weight": {"reply": 12},
+        "contexts": {"reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "you are already talking to this person. refer back to something earlier "
+                 "in the thread, get a detail slightly wrong, and carry on. only use this "
+                 "when there is actually something to refer back to.",
+        "examples": [
+            "you said the thing about the boat. i thought about it",
+            "this is the third thing youve told me",
+            "earlier you said it was blue",
+            "were still doing this then",
         ],
     },
 
@@ -317,14 +423,27 @@ def pick_mode(context="original", exclude=None):
     return random.choices(names, weights=weights, k=1)[0]
 
 
-def build_prompt(mode_name, fact=None, mention=None):
+def build_prompt(mode_name, fact=None, mention=None, ctx=None):
     mode = MODES[mode_name]
     ex = random.sample(mode["examples"], min(3, len(mode["examples"])))
 
     parts = []
     if mention:
-        parts.append(f'someone said this to you on the internet:\n\n"{mention}"\n')
-        parts.append("reply to them.")
+        if ctx and ctx.get("parent"):
+            parts.append("you got tagged under this, which is the thing everyone is "
+                         f'actually looking at:\n\n"{ctx["parent"]}"\n')
+        if ctx and ctx.get("prior"):
+            lines = []
+            for role, handle, text in ctx["prior"]:
+                who = "you" if role == "cark" else f"@{handle}"
+                lines.append(f"{who}: {text}")
+            parts.append("what has already been said in this thread:\n" +
+                         "\n".join(lines) + "\n")
+            parts.append("dont repeat anything you already said. move it along.\n")
+        parts.append(f'someone said this to you:\n\n"{mention}"\n')
+        parts.append("reply to them. react to the thing they are showing you, not just "
+                     "to the words. if theres a picture or a link you cant see it, so "
+                     "guess wrong about it.")
     else:
         parts.append("post something. nobody asked you anything. dont address anybody.")
 
@@ -404,7 +523,17 @@ def score_mention(tweet, author, conn, now):
     if URL_RE.search(tweet.text) and followers < 500:
         return None, "link from small account"
 
-    row = conn.execute(
+    # if they are replying to something cark said, that is a conversation and
+    # the cooldown does not apply. dropping a live thread is the one thing that
+    # actually kills engagement.
+    in_convo = bool(conn.execute(
+        "SELECT 1 FROM posts WHERE tweet_id = ?",
+        (str(getattr(tweet, "in_reply_to_user_id", "") or ""),)).fetchone()) or \
+        bool(conn.execute(
+            "SELECT 1 FROM convo WHERE conversation_id = ? AND role = 'cark'",
+            (str(getattr(tweet, "conversation_id", "") or ""),)).fetchone())
+
+    row = None if in_convo else conn.execute(
         "SELECT last_replied_at, replies_today, day FROM authors WHERE author_id = ?",
         (str(tweet.author_id),)).fetchone()
     today = now.date().isoformat()
@@ -432,6 +561,8 @@ def score_mention(tweet, author, conn, now):
         score += 1.0
     if "cat" in lowered or "cark" in lowered:
         score += 1.5
+    if in_convo:
+        score += 6.0          # continuing a thread beats starting one
     if tweets > 100000 and followers < 5000:
         score -= 2.0
 
@@ -450,6 +581,14 @@ def db():
         in_reply_to TEXT, created_at TEXT)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY, value TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS convo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT, tweet_id TEXT, role TEXT,
+        handle TEXT, text TEXT, created_at TEXT)""")
+    conn.execute("""CREATE INDEX IF NOT EXISTS idx_convo ON convo(conversation_id, id)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS thoughts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT, created_at TEXT)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS authors (
         author_id TEXT PRIMARY KEY, last_replied_at TEXT,
         replies_today INTEGER DEFAULT 0, day TEXT, replies_total INTEGER DEFAULT 0)""")
@@ -566,6 +705,17 @@ ABSTRACT = [
     "i suppose", "i realize", "i have come to", "one might say",
 ]
 
+# cark never promotes its own token. this is a hard gate, not a prompt nicety,
+# because a memecoin account that shills through its mascot is both worse
+# comedy and a compliance problem.
+SHILL = [
+    "buy", "buying", "sell", "selling", "moon", "mooning", "pump", "pumping",
+    "dump", "bullish", "bearish", "hodl", "100x", "1000x", "gem", "ape",
+    "market cap", "mcap", "price", "chart", "invest", "investing", "profit",
+    "rich", "diamond hands", "to the moon", "financial advice", "dyor",
+    "presale", "airdrop", "ath", "dip",
+]
+
 BANNED_PHRASES = ["as an ai", "fun fact", "did you know", "great question",
                   "i'm sorry", "im sorry", "language model", "here's", "heres",
                   "that is all i have", "thats all i have", "hope that helps",
@@ -604,6 +754,9 @@ def validate(text, mode_name):
     for f in FORMAL:
         if re.search(r"\b" + re.escape(f) + r"\b", lowered):
             return f"formal expansion: {f}"
+    for w in SHILL:
+        if re.search(r"\b" + re.escape(w) + r"\b", lowered):
+            return f"shill language: {w}"
 
     if mode.get("no_abstract"):
         for a in ABSTRACT:
@@ -638,11 +791,11 @@ def validate(text, mode_name):
 # ---------------------------------------------------------------- generation
 
 
-def generate(client, mode_name, model, fact=None, mention=None):
+def generate(client, mode_name, model, fact=None, mention=None, ctx=None):
     """Best of N against the voice gate."""
     last_reason = None
     for attempt in range(1, GEN_ATTEMPTS + 1):
-        prompt = build_prompt(mode_name, fact=fact, mention=mention)
+        prompt = build_prompt(mode_name, fact=fact, mention=mention, ctx=ctx)
         try:
             resp = client.messages.create(
                 model=model, max_tokens=200, temperature=1.0,
@@ -668,6 +821,252 @@ def generate(client, mode_name, model, fact=None, mention=None):
     if fact:
         return f"{random.choice(CAT_SOUNDS)}. {fact}"[:HARD_MAX_CHARS]
     return random.choice(MODES["noise_only"]["examples"])
+
+
+def remember_turn(conn, convo_id, tweet_id, role, handle, text):
+    conn.execute(
+        "INSERT INTO convo (conversation_id, tweet_id, role, handle, text, created_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (str(convo_id), str(tweet_id), role, handle, (text or "")[:400],
+         datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
+def convo_history(conn, convo_id, limit=8):
+    rows = conn.execute(
+        "SELECT role, handle, text FROM convo WHERE conversation_id = ? "
+        "ORDER BY id DESC LIMIT ?", (str(convo_id), limit)).fetchall()
+    return list(reversed(rows))
+
+
+def thread_context(conn, m, refs):
+    """What cark is actually looking at: the tweet it was tagged under, plus
+    anything already said in this thread."""
+    parent = None
+    for ref in (getattr(m, "referenced_tweets", None) or []):
+        if ref.get("type") in ("replied_to", "quoted"):
+            tw = refs.get(str(ref.get("id")))
+            if tw and getattr(tw, "text", None):
+                parent = strip_mentions(tw.text)[:400]
+                break
+
+    convo_id = getattr(m, "conversation_id", None) or m.id
+    prior = convo_history(conn, convo_id)
+    return {"parent": parent, "prior": prior, "convo_id": convo_id}
+
+
+# ---------------------------------------------------------------- cat mind
+
+# The chain is the point. Each thought is generated with the previous ones in
+# context, so reading top to bottom is a diary rather than a pile of one liners.
+# The seed is what cark's life was before anyone was watching.
+
+THOUGHT_SEED = [
+    "i have been given a window and i sit at it. thats the arrangement as i understand it",
+    "the bird came back today. same one. we did the same thing we always do and nothing happened again",
+    "ive worked out that the window doesnt open. i knew that. i think i wanted to check",
+]
+
+THINK_SYSTEM = SYSTEM + """
+
+RIGHT NOW
+you are writing in a private notebook, not posting. nobody is going to reply.
+this is the one place you are allowed to be a little longer, up to about 25 words.
+you are still flat. you still dont resolve anything."""
+
+THINK_PROMPT = """these are your last thoughts, oldest first:
+
+{chain}
+
+write the next one.
+
+it has to follow from those. carry something forward: the bird, the window, the
+box, the small bright rectangle, whatever you were last on. you can change your
+mind about something you said before. you can notice that nothing has changed.
+
+dont summarise the earlier thoughts. dont start with "still" or "again" every
+time. dont resolve anything and dont end on a question. concrete, specific,
+unfinished. output the thought only."""
+
+
+def recent_thoughts(conn, n=None):
+    n = n or THOUGHT_CHAIN_DEPTH
+    rows = conn.execute(
+        "SELECT text FROM thoughts ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+    return [r[0] for r in reversed(rows)]
+
+
+def all_thoughts(conn):
+    return conn.execute(
+        "SELECT id, text, created_at FROM thoughts ORDER BY id ASC").fetchall()
+
+
+def seed_thoughts(conn):
+    if conn.execute("SELECT COUNT(*) FROM thoughts").fetchone()[0]:
+        return
+    now = datetime.now(timezone.utc)
+    for i, t in enumerate(THOUGHT_SEED):
+        stamp = (now - timedelta(days=len(THOUGHT_SEED) - i)).isoformat()
+        conn.execute("INSERT INTO thoughts (text, created_at) VALUES (?, ?)",
+                     (t, stamp))
+    conn.commit()
+    log.info("seeded %d opening thoughts", len(THOUGHT_SEED))
+
+
+def think(conn, ai):
+    """Generate the next thought in the chain and store it."""
+    seed_thoughts(conn)
+    chain = recent_thoughts(conn)
+    prompt = THINK_PROMPT.format(chain="\n".join(f"- {t}" for t in chain))
+
+    for attempt in range(1, GEN_ATTEMPTS + 1):
+        try:
+            resp = ai.messages.create(
+                model=MODEL_ORIGINAL, max_tokens=300, temperature=1.0,
+                system=THINK_SYSTEM,
+                messages=[{"role": "user", "content": prompt}])
+        except Exception as e:
+            log.error("thought generation failed: %s", e)
+            return None
+
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        text = text.strip('"').strip()
+
+        reason = validate(text, "introspection")
+        if reason and reason.startswith("too long") and len(text) <= 220:
+            reason = None                      # notebook entries may run longer
+        if reason is None and text not in chain:
+            conn.execute("INSERT INTO thoughts (text, created_at) VALUES (?, ?)",
+                         (text, datetime.now(timezone.utc).isoformat()))
+            conn.commit()
+            log.info("thought #%d: %s",
+                     conn.execute("SELECT COUNT(*) FROM thoughts").fetchone()[0], text)
+            return text
+
+        log.warning("thought attempt %d rejected: %s | %s",
+                    attempt, reason or "repeat", text[:70])
+
+    return None
+
+
+def export_thoughts(conn, path):
+    rows = all_thoughts(conn)
+    data = [{"n": r[0], "text": r[1], "date": r[2]} for r in rows]
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"thoughts": data}, f, ensure_ascii=False, indent=2)
+    log.info("exported %d thoughts to %s", len(data), path)
+    return len(data)
+
+
+# ---------------------------------------------------------------- images
+
+
+def media_path(mode):
+    d = os.path.join(MEDIA_DIR, mode)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def existing_images(mode):
+    d = media_path(mode)
+    return [os.path.join(d, f) for f in sorted(os.listdir(d))
+            if f.lower().endswith(".png")]
+
+
+def images_today(conn, now):
+    today = now.date().isoformat()
+    if get_state(conn, "image_day") != today:
+        set_state(conn, "image_day", today)
+        set_state(conn, "image_count", 0)
+        return 0
+    return int(get_state(conn, "image_count", 0))
+
+
+def bump_images_today(conn, now):
+    set_state(conn, "image_count", images_today(conn, now) + 1)
+
+
+def generate_image(conn, mode, scene=None):
+    """Ask openai for one image, save it under media/<mode>/. Returns a path."""
+    if OpenAI is None:
+        log.error("openai package not installed, run: pip install openai")
+        return None
+    if not OPENAI_API_KEY:
+        log.error("OPENAI_API_KEY not set")
+        return None
+
+    prompt, scene_used = build_image_prompt(mode, scene)
+    log.info("generating image [%s]: %s", mode, scene_used[:70])
+
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        resp = client.images.generate(
+            model=IMAGE_MODEL, prompt=prompt,
+            size=IMAGE_SIZE, quality=IMAGE_QUALITY, n=1)
+        b64 = resp.data[0].b64_json
+    except Exception as e:
+        log.error("image generation failed: %s", e)
+        return None
+
+    if not b64:
+        log.error("image response had no data")
+        return None
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    suffix = "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=4))
+    path = os.path.join(media_path(mode), f"{stamp}-{suffix}.png")
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(b64))
+    log.info("saved %s", path)
+    return path
+
+
+def choose_image(conn, mode):
+    """Reuse an existing image for this mode or generate a new one.
+
+    Reuse is the cost lever. Generating every single time is the expensive way
+    to run this and nobody notices the repeats at posting cadence anyway.
+    """
+    if not IMAGE_ENABLED:
+        return None
+
+    now = datetime.now(timezone.utc)
+    have = existing_images(mode)
+
+    if have and random.random() < IMAGE_REUSE_CHANCE:
+        pick = random.choice(have)
+        log.info("reusing image %s", pick)
+        return pick
+
+    if images_today(conn, now) >= IMAGE_MAX_PER_DAY:
+        if have:
+            log.info("daily image generation cap hit, reusing instead")
+            return random.choice(have)
+        log.info("daily image generation cap hit and nothing to reuse")
+        return None
+
+    path = generate_image(conn, mode)
+    if path:
+        bump_images_today(conn, now)
+        return path
+    return have and random.choice(have) or None
+
+
+def upload_media(path):
+    """X media upload runs on the v1.1 api, which is a different auth object
+    from the v2 Client used for posting."""
+    try:
+        auth = tweepy.OAuth1UserHandler(
+            os.environ["X_API_KEY"], os.environ["X_API_SECRET"],
+            os.environ["X_ACCESS_TOKEN"], os.environ["X_ACCESS_SECRET"])
+        api_v1 = tweepy.API(auth)
+        media = api_v1.media_upload(filename=path)
+        return media.media_id
+    except Exception as e:
+        log.error("media upload failed (%s). if this is a 403, your api tier may "
+                  "not include v1.1 media upload. posting text only", e)
+        return None
 
 
 # ---------------------------------------------------------------- x client
@@ -700,21 +1099,41 @@ def resolve_user_id(conn, x):
     return uid
 
 
-def compose(conn, ai, model, mention=None):
+def compose(conn, ai, model, mention=None, ctx=None):
     """Pick a mode for this context, avoid repeating the last few, generate."""
     context = "reply" if mention else "original"
-    mode_name = pick_mode(context, exclude=recent_modes(conn, 3))
+    exclude = set(recent_modes(conn, 3))
+    # callback only makes sense when there is something to call back to
+    if not (ctx and ctx.get("prior")):
+        exclude.add("callback")
+    mode_name = pick_mode(context, exclude=exclude)
     fact = pick_fact(conn) if MODES[mode_name].get("fact") else None
-    text = generate(ai, mode_name, model, fact=fact, mention=mention)
+    text = generate(ai, mode_name, model, fact=fact, mention=mention, ctx=ctx)
     return mode_name, text
 
 
 def post_original(conn, ai, x):
     mode_name, text = compose(conn, ai, MODEL_ORIGINAL)
-    resp = x.create_tweet(text=text)
+
+    # images go on originals only. an image on every reply reads as a content
+    # account, and replies are where the volume is.
+    media_ids = None
+    if IMAGE_ENABLED and mode_name in SCENES and random.random() < IMAGE_CHANCE:
+        path = choose_image(conn, mode_name)
+        if path:
+            mid = upload_media(path)
+            if mid:
+                media_ids = [mid]
+
+    if media_ids:
+        resp = x.create_tweet(text=text, media_ids=media_ids)
+    else:
+        resp = x.create_tweet(text=text)
+
     tid = resp.data["id"]
     record_post(conn, tid, "original", mode_name, text)
-    log.info("posted %s [%s]: %s", tid, mode_name, text)
+    log.info("posted %s [%s]%s: %s", tid, mode_name,
+             " +image" if media_ids else "", text)
     return tid
 
 
@@ -723,29 +1142,34 @@ def fetch_mentions(conn, x, user_id):
     try:
         resp = x.get_users_mentions(
             id=user_id, since_id=since_id, max_results=50,
-            tweet_fields=["author_id", "text", "created_at", "conversation_id"],
-            expansions=["author_id"],
+            tweet_fields=["author_id", "text", "created_at", "conversation_id",
+                          "referenced_tweets", "in_reply_to_user_id"],
+            expansions=["author_id", "referenced_tweets.id",
+                        "referenced_tweets.id.author_id"],
             user_fields=["public_metrics", "created_at", "verified", "username"])
     except tweepy.TooManyRequests:
-        return [], {}, True
+        return [], {}, True, {}
     except tweepy.Forbidden:
         log.error("mentions forbidden. free tier cannot read mentions, you need Basic. "
                   "posting still works")
-        return [], {}, False
+        return [], {}, False, {}
     except Exception as e:
         log.error("mention fetch failed: %s", e)
-        return [], {}, False
+        return [], {}, False, {}
 
     mentions = list(resp.data or [])
-    users = {}
-    if resp.includes and "users" in resp.includes:
-        users = {str(u.id): u for u in resp.includes["users"]}
-    return mentions, users, False
+    users, refs = {}, {}
+    if resp.includes:
+        for u in resp.includes.get("users", []):
+            users[str(u.id)] = u
+        for tw in resp.includes.get("tweets", []):
+            refs[str(tw.id)] = tw
+    return mentions, users, False, refs
 
 
 def handle_mentions(conn, ai, x, user_id, audit=False):
     now = datetime.now(timezone.utc)
-    mentions, users, limited = fetch_mentions(conn, x, user_id)
+    mentions, users, limited, refs = fetch_mentions(conn, x, user_id)
 
     if limited:
         # X rate limits mentions hard. double the poll interval each time we
@@ -795,11 +1219,17 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
 
     for score, m in chosen:
         body = strip_mentions(m.text)[:300] or "(they tagged you and said nothing)"
-        mode_name, text = compose(conn, ai, MODEL_REPLY, mention=body)
+        ctx = thread_context(conn, m, refs)
+        author = users.get(str(m.author_id))
+        handle = getattr(author, "username", "someone") if author else "someone"
+
+        mode_name, text = compose(conn, ai, MODEL_REPLY, mention=body, ctx=ctx)
         try:
             resp = x.create_tweet(text=text, in_reply_to_tweet_id=m.id)
             record_post(conn, resp.data["id"], "reply", mode_name, text,
                         in_reply_to=str(m.id))
+            remember_turn(conn, ctx["convo_id"], m.id, "them", handle, body)
+            remember_turn(conn, ctx["convo_id"], resp.data["id"], "cark", HANDLE, text)
             note_reply(conn, m.author_id, now)
             bump_replies_today(conn, now)
             log.info("replied to %s [%s]: %s", m.id, mode_name, text)
@@ -821,6 +1251,15 @@ def tick(conn, ai, x, user_id, force=False):
         except Exception as e:
             log.error("original post failed: %s", e)
 
+    last_think = float(get_state(conn, "last_think", 0))
+    if force or now - last_think > THINK_EVERY_MIN * 60:
+        try:
+            if think(conn, ai) and THOUGHTS_JSON:
+                export_thoughts(conn, THOUGHTS_JSON)
+        except Exception as e:
+            log.error("thinking failed: %s", e)
+        set_state(conn, "last_think", now)
+
     last_mention = float(get_state(conn, "last_mention", 0))
     backoff = float(get_state(conn, "mention_backoff", 1))
     if force or now - last_mention > MENTION_EVERY_MIN * 60 * backoff:
@@ -834,12 +1273,61 @@ def main():
     ap.add_argument("--reply")
     ap.add_argument("--mode", choices=list(MODES), help="force a specific mode")
     ap.add_argument("--sample", type=int, help="generate N posts across modes")
+    ap.add_argument("--image", nargs="?", const="__random__",
+                    help="generate one image for a mode and save it, no posting")
+    ap.add_argument("--fill-images", type=int, metavar="N",
+                    help="generate N images per mode to seed the media folder")
+    ap.add_argument("--think", action="store_true",
+                    help="generate the next thought in the chain")
+    ap.add_argument("--mind", action="store_true", help="print the whole chain")
+    ap.add_argument("--export-thoughts", metavar="PATH",
+                    help="write thoughts.json for the website")
     ap.add_argument("--audit", action="store_true")
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
 
     conn = db()
+
+    if args.image:
+        mode = args.image if args.image != "__random__" else random.choice(list(SCENES))
+        if mode not in SCENES:
+            print(f"no scenes for mode {mode}. options: {', '.join(SCENES)}")
+            return
+        path = generate_image(conn, mode)
+        print(f"\n{path or 'failed'}\n")
+        return
+
+    if args.fill_images:
+        made = 0
+        for mode in SCENES:
+            for _ in range(args.fill_images):
+                if generate_image(conn, mode):
+                    made += 1
+                time.sleep(2)
+        print(f"\ngenerated {made} images under {MEDIA_DIR}/\n")
+        return
+
+    if args.mind:
+        seed_thoughts(conn)
+        print()
+        for n, text, created in all_thoughts(conn):
+            print(f"  {n:03d}  {text}")
+            print(f"       {created[:10]}\n")
+        return
+
+    if args.export_thoughts:
+        seed_thoughts(conn)
+        export_thoughts(conn, args.export_thoughts)
+        return
+
     ai = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    if args.think:
+        text = think(conn, ai)
+        print(f"\n{text or 'failed'}\n")
+        if text and THOUGHTS_JSON:
+            export_thoughts(conn, THOUGHTS_JSON)
+        return
 
     if args.sample:
         model = MODEL_REPLY if args.reply else MODEL_ORIGINAL
@@ -874,8 +1362,10 @@ def main():
         tick(conn, ai, x, user_id, force=True)
         return
 
-    log.info("cark is awake as @%s. originals every %dm, mentions every %.0fm",
-             HANDLE, POST_EVERY_MIN, MENTION_EVERY_MIN)
+    log.info("cark is awake as @%s. originals every %dm, mentions every %.0fm, "
+             "images %s", HANDLE, POST_EVERY_MIN, MENTION_EVERY_MIN,
+             f"on ({IMAGE_CHANCE:.0%} of originals, max {IMAGE_MAX_PER_DAY} new/day)"
+             if IMAGE_ENABLED else "off")
     while True:
         try:
             tick(conn, ai, x, user_id)
