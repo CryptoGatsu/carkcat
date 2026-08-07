@@ -6,8 +6,11 @@ Single page. Three sections: ask cark, cat mind, token.
 
 ```
 index.html        the page
+trades.html       the book, cark's positions and pnl
 cat3d.js          the three.js cark in the bother section
 api/ask.js        serverless function, holds the anthropic key
+vercel.json       clean urls, no .html in the address bar
+trades.json       written by the bot, optional
 cark.png          hero logo, 760px png fallback
 cark.webp         hero logo, 44kb, what actually loads
 icon.png          favicon and apple touch icon
@@ -136,3 +139,35 @@ same. The layer is `position:fixed` with `contain:strict` and `pointer-events:no
 so it never intercepts a click and never triggers layout on scroll.
 
 Turn the density down in the `meows` function if it reads as busy on your display.
+
+## the book
+
+`/trades` reads `trades.json`. Missing file renders an empty book rather than
+breaking, which is also the honest default state.
+
+Generate it from the bot:
+
+```powershell
+cd bot
+python trading.py --refresh
+python trading.py --export ..\trades.json
+```
+
+Paper positions only for now. `trades.json` carries a `mode` field and the page
+shows a `paper trading, no real positions` badge whenever it is not `live`, so the
+disclosure is automatic rather than something you have to remember to write.
+
+## urls
+
+`vercel.json` sets `cleanUrls`, so `/trades` serves `trades.html` and `/trades.html`
+redirects to it. Link without the extension. Adding a page means adding the file,
+nothing else to configure.
+
+## the contract address
+
+Sits in the footer of every page and in the token section on the home page. Any
+element with `data-copy` containing a `<code>` and a `.act` span becomes a copy
+button automatically, so a new one needs no JavaScript.
+
+To change the address, search both html files for `Ek5APD` and replace. It appears
+once per footer plus once in the index token section.

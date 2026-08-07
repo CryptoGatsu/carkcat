@@ -98,6 +98,21 @@ h1{font-size:clamp(2.4rem,9vw,3.4rem);line-height:1;letter-spacing:-.03em;
 .pass .who{font-family:"Space Mono",monospace;font-size:.625rem;color:var(--chalk-low);
   white-space:nowrap}
 footer{padding:10vh 0 8vh;text-align:center}
+
+footer .ca-foot{
+  display:flex;align-items:center;gap:.7rem;margin:0 auto 1.5rem;
+  max-width:26rem;background:transparent;border:1px solid var(--chalk-faint);
+  border-radius:2px;padding:.7rem .9rem;cursor:pointer;transition:border-color .25s;
+}
+footer .ca-foot:hover{border-color:var(--blush-low)}
+footer .ca-foot code{
+  font-family:"Space Mono",monospace;font-size:.625rem;color:var(--chalk-mid);
+  word-break:break-all;line-height:1.5;flex:1;text-align:left;
+}
+footer .ca-foot .act{
+  font-family:"Space Mono",monospace;font-size:.5625rem;letter-spacing:.14em;
+  color:var(--chalk-low);text-transform:uppercase;white-space:nowrap;
+}
 footer p{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.1em;
   color:var(--chalk-low);margin:0 auto;max-width:34rem;line-height:2}
 a:focus-visible,button:focus-visible{outline:1px solid var(--blush);outline-offset:3px}
@@ -111,9 +126,9 @@ a:focus-visible,button:focus-visible{outline:1px solid var(--blush);outline-offs
   <p class="lede">People tweet coins at cark. Most of them it ignores. This is
     what it did anyway, and what it said about it.</p>
   <div id="mode"></div>
-  <button class="wallet" id="wallet" aria-label="Copy cark's wallet address">
+  <button class="wallet" data-copy aria-label="Copy cark's wallet address">
     <code id="walletText">8KPs4mNA9fqG7yNe2zbrb9Yn7o1W7VMvXNCfqZnPJVBQ</code>
-    <span class="act" id="walletAct">copy</span>
+    <span class="act">copy</span>
   </button>
 </header>
 
@@ -134,6 +149,9 @@ a:focus-visible,button:focus-visible{outline:1px solid var(--blush);outline-offs
 </main>
 
 <footer class="wrap">
+  <button class="ca-foot" data-copy aria-label="Copy the cark contract address">
+    <code>Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump</code><span class="act">copy</span>
+  </button>
   <p>cark is a cat. it does not know what a token is, it cannot advise you about
      one, and nothing on this page is financial advice or a recommendation.</p>
 </footer>
@@ -220,15 +238,28 @@ a:focus-visible,button:focus-visible{outline:1px solid var(--blush);outline-offs
                realized_pnl:0, unrealized_pnl:0, deployed_usd:0 });
     });
 
-  var w = document.getElementById("wallet"), wt = document.getElementById("walletText"),
-      wa = document.getElementById("walletAct");
-  w.addEventListener("click", function(){
-    var v = wt.textContent.trim();
-    function done(){ wa.textContent = "copied";
-      setTimeout(function(){ wa.textContent = "copy"; }, 1800); }
-    if (navigator.clipboard && window.isSecureContext){
-      navigator.clipboard.writeText(v).then(done, function(){ wa.textContent = "select it"; });
-    } else { wa.textContent = "select it"; }
+  /* ---------- copy buttons ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(btn){
+    var codeEl = btn.querySelector("code"), actEl = btn.querySelector(".act");
+    btn.addEventListener("click", function(){
+      var value = codeEl.textContent.trim();
+      function done(){
+        actEl.textContent = "copied";
+        setTimeout(function(){ actEl.textContent = "copy"; }, 1800);
+      }
+      function fallback(){
+        var t = document.createElement("textarea");
+        t.value = value; t.setAttribute("readonly","");
+        t.style.position = "fixed"; t.style.opacity = "0";
+        document.body.appendChild(t); t.select();
+        try { document.execCommand("copy"); done(); }
+        catch(e){ actEl.textContent = "select it"; }
+        document.body.removeChild(t);
+      }
+      if (navigator.clipboard && window.isSecureContext){
+        navigator.clipboard.writeText(value).then(done, fallback);
+      } else { fallback(); }
+    });
   });
 })();
 </script>

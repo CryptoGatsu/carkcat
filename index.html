@@ -202,6 +202,21 @@ section:first-of-type{padding-top:11vh}
 .links a:hover,.links a:focus-visible{color:var(--chalk);border-color:var(--blush-low)}
 
 footer{padding:13vh 0 8vh;text-align:center;position:relative;z-index:1}
+
+footer .ca-foot{
+  display:flex;align-items:center;gap:.7rem;margin:0 auto 1.5rem;
+  max-width:26rem;background:transparent;border:1px solid var(--chalk-faint);
+  border-radius:2px;padding:.7rem .9rem;cursor:pointer;transition:border-color .25s;
+}
+footer .ca-foot:hover{border-color:var(--blush-low)}
+footer .ca-foot code{
+  font-family:"Space Mono",monospace;font-size:.625rem;color:var(--chalk-mid);
+  word-break:break-all;line-height:1.5;flex:1;text-align:left;
+}
+footer .ca-foot .act{
+  font-family:"Space Mono",monospace;font-size:.5625rem;letter-spacing:.14em;
+  color:var(--chalk-low);text-transform:uppercase;white-space:nowrap;
+}
 footer p{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.1em;
   color:var(--chalk-low);margin:0 auto;max-width:30rem;line-height:2}
 a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
@@ -275,20 +290,23 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
 
 <section class="wrap">
   <p class="eyebrow">token</p>
-  <button class="ca" id="ca" aria-label="Copy the contract address">
-    <code id="caText">Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump</code>
-    <span class="act" id="caAct">copy</span>
+  <button class="ca" data-copy aria-label="Copy the contract address">
+    <code>Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump</code>
+    <span class="act">copy</span>
   </button>
   <div class="links">
     <a href="https://x.com/carkcatmeow" target="_blank" rel="noopener">x</a>
     <a href="https://dexscreener.com/solana/vtogs4xulm59uu6wqwda2pgecxj7rsfkpkqgbakvjwb" target="_blank" rel="noopener">chart</a>
-    <a href="/trades.html">the book</a>
+    <a href="/trades">the book</a>
   </div>
 </section>
 
 </main>
 
 <footer class="wrap">
+  <button class="ca-foot" data-copy aria-label="Copy the cark contract address">
+    <code>Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump</code><span class="act">copy</span>
+  </button>
   <p>cark does not know what a token is and cannot advise you about one.
      nothing here is financial advice.</p>
 </footer>
@@ -549,27 +567,28 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     })
     .catch(function(){ render(SEED); });
 
-  /* ---------- contract address ---------- */
-  var ca = document.getElementById("ca"), caText = document.getElementById("caText"),
-      caAct = document.getElementById("caAct");
-  ca.addEventListener("click", function(){
-    var value = caText.textContent.trim();
-    function done(){
-      caAct.textContent = "copied";
-      setTimeout(function(){ caAct.textContent = "copy"; }, 1800);
-    }
-    function fallback(){
-      var t = document.createElement("textarea");
-      t.value = value; t.setAttribute("readonly","");
-      t.style.position = "fixed"; t.style.opacity = "0";
-      document.body.appendChild(t); t.select();
-      try { document.execCommand("copy"); done(); }
-      catch(e){ caAct.textContent = "select it"; }
-      document.body.removeChild(t);
-    }
-    if (navigator.clipboard && window.isSecureContext){
-      navigator.clipboard.writeText(value).then(done, fallback);
-    } else { fallback(); }
+  /* ---------- copy buttons ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(btn){
+    var codeEl = btn.querySelector("code"), actEl = btn.querySelector(".act");
+    btn.addEventListener("click", function(){
+      var value = codeEl.textContent.trim();
+      function done(){
+        actEl.textContent = "copied";
+        setTimeout(function(){ actEl.textContent = "copy"; }, 1800);
+      }
+      function fallback(){
+        var t = document.createElement("textarea");
+        t.value = value; t.setAttribute("readonly","");
+        t.style.position = "fixed"; t.style.opacity = "0";
+        document.body.appendChild(t); t.select();
+        try { document.execCommand("copy"); done(); }
+        catch(e){ actEl.textContent = "select it"; }
+        document.body.removeChild(t);
+      }
+      if (navigator.clipboard && window.isSecureContext){
+        navigator.clipboard.writeText(value).then(done, fallback);
+      } else { fallback(); }
+    });
   });
 })();
 </script>
