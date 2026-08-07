@@ -84,6 +84,7 @@ section:first-of-type{padding-top:11vh}
 .ask-input::placeholder{color:var(--chalk-low)}
 .ask-input:focus{outline:none;border-bottom-color:var(--blush-low)}
 .ask-row{display:flex;justify-content:space-between;align-items:center;gap:1rem}
+.ask-tools{display:flex;gap:.6rem;align-items:center}
 .count{font-family:"Space Mono",monospace;font-size:.6875rem;color:var(--chalk-low)}
 .btn{
   font-family:"Space Mono",monospace;font-size:.75rem;letter-spacing:.14em;
@@ -93,12 +94,24 @@ section:first-of-type{padding-top:11vh}
 }
 .btn:hover:not(:disabled),.btn:focus-visible{color:var(--chalk);border-color:var(--blush-low)}
 .btn:disabled{opacity:.35;cursor:default}
-.answer{margin-top:3rem;min-height:2rem}
-.answer p{font-size:1.35rem;line-height:1.5;margin:0;opacity:0;animation:surface .8s ease forwards}
+.btn.ghost{border-color:transparent;color:var(--chalk-low);padding:.6rem .8rem}
+.btn.ghost:hover{color:var(--chalk-mid);border-color:transparent}
+
+.thread{margin-bottom:2.5rem}
+.thread:empty{margin-bottom:0}
+.turn{margin-bottom:2.75rem;animation:surface .6s ease}
+.turn .said{
+  font-family:"Space Mono",monospace;font-size:.75rem;line-height:1.7;
+  color:var(--chalk-low);margin:0 0 .9rem;
+}
+.turn .said::before{content:"you  ";color:var(--chalk-faint)}
+.turn .back{font-size:1.35rem;line-height:1.5;margin:0}
+.turn .mode{
+  font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.16em;
+  color:var(--chalk-low);margin-top:.85rem;text-transform:lowercase;
+}
+.turn .err{color:var(--chalk-mid);font-size:1rem;font-style:italic;margin:0}
 @keyframes surface{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.answer .meta{font-family:"Space Mono",monospace;font-size:.6875rem;
-  letter-spacing:.14em;color:var(--chalk-low);margin-top:1.25rem}
-.answer .err{color:var(--chalk-mid);font-size:1rem;font-style:italic}
 .waiting{font-family:"Space Mono",monospace;font-size:.75rem;color:var(--chalk-low);letter-spacing:.1em}
 .waiting::after{content:"";animation:dots 1.6s steps(4,end) infinite}
 @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
@@ -156,9 +169,9 @@ section:first-of-type{padding-top:11vh}
 .entry p{margin:0;font-size:1.3rem;line-height:1.55}
 .entry time{display:block;margin-top:.9rem;font-family:"Space Mono",monospace;
   font-size:.625rem;letter-spacing:.16em;text-transform:uppercase;color:var(--chalk-low)}
-.thread{position:absolute;left:.4rem;top:2rem;bottom:-5.5rem;width:1px;
+.entry .link{position:absolute;left:.4rem;top:2rem;bottom:-5.5rem;width:1px;
   background:linear-gradient(var(--chalk-faint),transparent)}
-.entry:last-child .thread{display:none}
+.entry:last-child .link{display:none}
 
 /* ---------- token ---------- */
 .ca{
@@ -208,13 +221,16 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
 
 <section class="wrap">
   <p class="eyebrow">ask cark</p>
+  <div class="thread" id="thread" aria-live="polite"></div>
   <textarea id="q" class="ask-input" rows="2" maxlength="280"
-    placeholder="ask it something. it will not help."></textarea>
+    placeholder="ask it something. it remembers, badly."></textarea>
   <div class="ask-row">
     <span class="count mono" id="count">280</span>
-    <button class="btn" id="send">ask</button>
+    <div class="ask-tools">
+      <button class="btn ghost" id="reset" hidden>start over</button>
+      <button class="btn" id="send">ask</button>
+    </div>
   </div>
-  <div class="answer" id="answer" aria-live="polite"></div>
 </section>
 
 <section class="wrap">
@@ -288,10 +304,12 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     layer.appendChild(frag);
   })();
 
-  /* ---------- ask ---------- */
+  /* ---------- ask ----------
+     Turns are kept and sent back, so cark can follow up instead of answering
+     every message as if it were the first one it had ever seen. */
   var q = document.getElementById("q"), send = document.getElementById("send"),
-      answer = document.getElementById("answer"), count = document.getElementById("count"),
-      busy = false;
+      reset = document.getElementById("reset"), thread = document.getElementById("thread"),
+      count = document.getElementById("count"), busy = false, history = [];
 
   function updateCount(){ count.textContent = 280 - q.value.length; }
   q.addEventListener("input", updateCount); updateCount();
@@ -299,30 +317,51 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); ask(); }
   });
   send.addEventListener("click", ask);
+  reset.addEventListener("click", function(){
+    history = []; thread.innerHTML = ""; reset.hidden = true; q.focus();
+  });
+
+  function addTurn(question){
+    var turn = document.createElement("article");
+    turn.className = "turn";
+    var said = document.createElement("p");
+    said.className = "said"; said.textContent = question;
+    var back = document.createElement("p");
+    back.className = "waiting"; back.textContent = "cark is looking at you";
+    turn.appendChild(said); turn.appendChild(back);
+    thread.appendChild(turn);
+    return { turn: turn, back: back };
+  }
 
   function ask(){
     var text = q.value.trim();
     if (!text || busy) return;
     busy = true; send.disabled = true;
-    answer.innerHTML = '<p class="waiting mono">cark is looking at you</p>';
+    q.value = ""; updateCount();
+
+    var slot = addTurn(text);
+    slot.turn.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+
     fetch("/api/ask", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ question:text })
+      body: JSON.stringify({ question: text, history: history.slice(-6) })
     })
     .then(function(r){ return r.json().then(function(d){
       if (!r.ok) throw new Error(d.error || "cark did not answer"); return d; }); })
     .then(function(d){
-      answer.innerHTML = "";
-      var p = document.createElement("p"); p.textContent = d.answer; answer.appendChild(p);
-      var m = document.createElement("div"); m.className = "meta mono";
-      m.textContent = "\u2014 " + (d.mode || "cark"); answer.appendChild(m);
+      slot.back.className = "back";
+      slot.back.textContent = d.answer;
+      var m = document.createElement("div");
+      m.className = "mode"; m.textContent = d.mode || "cark";
+      slot.turn.appendChild(m);
+      history.push({ q: text, a: d.answer });
+      reset.hidden = false;
     })
     .catch(function(err){
-      answer.innerHTML = "";
-      var p = document.createElement("p"); p.className = "err";
-      p.textContent = err.message === "Failed to fetch"
-        ? "The connection dropped before cark replied. Try again." : err.message;
-      answer.appendChild(p);
+      slot.back.className = "err";
+      slot.back.textContent = err.message === "Failed to fetch"
+        ? "The connection dropped before cark replied. Try again."
+        : err.message;
     })
     .finally(function(){ busy = false; send.disabled = false; });
   }
@@ -437,7 +476,7 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
       var e = document.createElement("article"); e.className = "entry";
       var n = document.createElement("span"); n.className = "n mono";
       n.textContent = String(i + 1).padStart(3, "0"); e.appendChild(n);
-      var thread = document.createElement("span"); thread.className = "thread"; e.appendChild(thread);
+      var link = document.createElement("span"); link.className = "link"; e.appendChild(link);
       var p = document.createElement("p"); p.textContent = t.text; e.appendChild(p);
       if (t.date){
         var d = new Date(t.date);
