@@ -149,6 +149,16 @@ Where it goes depends on why it left. Played with twice, it goes to its own head
 Bothered four times, same. In the park it always goes home, because it always wants
 to go home. From its own head it surfaces at the window.
 
+**The head follows your cursor** while you are moving it, then goes back to
+looking around on its own after 3.5 seconds of stillness or if you leave the
+window. How fast it turns is part of the mood: at the park it snaps to you in
+0.04 seconds and turns further, at the window it is an easy 0.09, and in its own
+head it takes almost a second and barely turns at all, because you are not
+really there. Tracking only runs while idle, so it never fights the toy chase,
+the pounce, or eating.
+
+On touch it only tracks while a finger is down. A finger is a poke, not a gaze.
+
 **Body language** follows. At the park it breathes fast, its tail lashes at three
 times the window rate, and it glances around every 1.3 seconds. In its own head it
 barely moves and looks around every 7.5 seconds.

@@ -59,12 +59,21 @@ window.CarkCat = (function () {
   var state = "idle", stateUntil = 0, spin = 0, spinTarget = 0,
       dragging = false, lastX = 0, dragged = false, nextGlance = 3, glance = 0;
 
+  /* where the cursor is, relative to the middle of the canvas. clamped so a
+     pointer way off across the page still only turns the head so far. */
+  var look = { x: 0, y: 0, live: false, at: 0 };
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
   /* body language per place. at the window cark is settled, at the park it is
      wound up and scanning, in its own head it barely moves. */
   var TEMPER = {
-    window: { breath: 1.4,  tail: 1.4, tailAmp: 0.055, glanceGap: 4.5, glanceArc: 0.7,  ear: 0.97 },
-    park:   { breath: 2.3,  tail: 3.1, tailAmp: 0.12,  glanceGap: 1.3, glanceArc: 1.15, ear: 0.9  },
-    mind:   { breath: 0.85, tail: 0.5, tailAmp: 0.03,  glanceGap: 7.5, glanceArc: 0.35, ear: 0.99 }
+    window: { breath: 1.4,  tail: 1.4, tailAmp: 0.055, glanceGap: 4.5, glanceArc: 0.7, ear: 0.97,
+              track: 1,    ease: 0.09 },
+    park:   { breath: 2.3,  tail: 3.1, tailAmp: 0.12,  glanceGap: 1.3, glanceArc: 1.15, ear: 0.9,
+              track: 1.15, ease: 0.17 },   // snaps to movement, it is wound up
+    mind:   { breath: 0.85, tail: 0.5, tailAmp: 0.03,  glanceGap: 7.5, glanceArc: 0.35, ear: 0.99,
+              track: 0.35, ease: 0.025 }   // barely registers you
   };
   function temper() { return TEMPER[activeScene] || TEMPER.window; }
 
@@ -543,13 +552,24 @@ window.CarkCat = (function () {
     cheeks.forEach(function (c) { c.material.opacity += (want - c.material.opacity) * 0.08; });
 
     if (state === "idle") {
-      /* occasional glance so it is never perfectly still */
-      if (t > nextGlance) {
-        glance = (Math.random() - 0.5) * tp.glanceArc;
-        nextGlance = t + tp.glanceGap * (0.6 + Math.random() * 0.9);
+      /* follow the cursor while it is moving, drift back to looking around
+         on its own once you stop or leave */
+      var watching = look.live && (performance.now() - look.at) < 3500;
+
+      if (watching) {
+        var yaw   = clamp(look.x * 0.62 * tp.track, -0.62, 0.62);
+        var pitch = clamp(look.y * 0.3 * tp.track, -0.3, 0.3);
+        head.rotation.y += (yaw - head.rotation.y) * tp.ease;
+        head.rotation.x += (pitch - head.rotation.x) * tp.ease;
+        nextGlance = t + tp.glanceGap;      // no need to invent something to look at
+      } else {
+        if (t > nextGlance) {
+          glance = (Math.random() - 0.5) * tp.glanceArc;
+          nextGlance = t + tp.glanceGap * (0.6 + Math.random() * 0.9);
+        }
+        head.rotation.y += (glance - head.rotation.y) * 0.03;
+        head.rotation.x += (Math.sin(t * 0.6) * 0.04 - head.rotation.x) * 0.05;
       }
-      head.rotation.y += (glance - head.rotation.y) * 0.03;
-      head.rotation.x += (Math.sin(t * 0.6) * 0.04 - head.rotation.x) * 0.05;
     } else {
       head.rotation.x *= 0.9;
       head.rotation.y *= 0.9;
@@ -603,6 +623,23 @@ window.CarkCat = (function () {
     renderer.render(scene, camera);
   }
 
+  function bindLook(el) {
+    function track(e) {
+      var p = e.touches ? e.touches[0] : e;
+      var r = el.getBoundingClientRect();
+      if (!r.width) return;
+      look.x = clamp((p.clientX - (r.left + r.width / 2)) / (r.width / 2), -1.6, 1.6);
+      look.y = clamp((p.clientY - (r.top + r.height / 2)) / (r.height / 2), -1.6, 1.6);
+      look.live = true;
+      look.at = performance.now();
+    }
+    window.addEventListener("mousemove", track, { passive: true });
+    /* a finger is a poke, not a gaze, so touch only tracks while it is down */
+    el.addEventListener("touchmove", track, { passive: true });
+    document.addEventListener("mouseleave", function () { look.live = false; });
+    window.addEventListener("blur", function () { look.live = false; });
+  }
+
   function bindDrag(el) {
     function down(e) { dragging = true; dragged = false; lastX = (e.touches ? e.touches[0] : e).clientX; }
     function move(e) {
@@ -647,6 +684,7 @@ window.CarkCat = (function () {
       buildScenes();
       resize();
       bindDrag(renderer.domElement);
+      bindLook(renderer.domElement);
       window.addEventListener("resize", resize);
 
       if ("IntersectionObserver" in window) {
