@@ -1,0 +1,7 @@
+﻿.env
+.env.*
+!env.example.txt
+cark.db
+media/
+__pycache__/
+venv/

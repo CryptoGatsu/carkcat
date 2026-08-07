@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cark</title>
+<meta name="description" content="a cat that answers questions it does not understand">
+<link rel="icon" href="/icon.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta property="og:title" content="cark">
+<meta property="og:description" content="a cat that answers questions it does not understand">
+<meta property="og:image" content="/og.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="cark">
+<meta name="twitter:description" content="a cat that answers questions it does not understand">
+<meta name="twitter:image" content="/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,300&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#000000;
+  --chalk:#f2f0ec;
+  --chalk-mid:rgba(242,240,236,.52);
+  --chalk-low:rgba(242,240,236,.26);
+  --chalk-faint:rgba(242,240,236,.10);
+  --blush:#f2a7c3;
+  --blush-low:rgba(242,167,195,.30);
+  --measure:33rem;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--void);color:var(--chalk);
+  font-family:"Newsreader",Georgia,serif;font-weight:300;
+  font-size:clamp(1rem,.95rem + .35vw,1.15rem);line-height:1.65;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+.mono{font-family:"Space Mono",ui-monospace,monospace}
+.wrap{width:100%;max-width:var(--measure);margin:0 auto;padding:0 1.5rem}
+main{position:relative;z-index:1}
+section{padding:20vh 0}
+section:first-of-type{padding-top:11vh}
+
+.eyebrow{
+  font-family:"Space Mono",monospace;font-size:.6875rem;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--chalk-low);margin:0 0 2.5rem;
+}
+.eyebrow::before{content:"";display:inline-block;width:1.5rem;height:1px;
+  background:var(--chalk-faint);vertical-align:.3em;margin-right:.75rem}
+
+/* ---------- ambient meows ---------- */
+#meows{
+  position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  contain:strict;
+}
+#meows span{
+  position:absolute;font-family:"Space Mono",monospace;color:var(--chalk);
+  white-space:nowrap;will-change:transform,opacity;
+  animation:drift linear infinite;
+}
+@keyframes drift{
+  0%{transform:translate3d(0,0,0) rotate(var(--rot))}
+  50%{transform:translate3d(0,-22px,0) rotate(var(--rot))}
+  100%{transform:translate3d(0,0,0) rotate(var(--rot))}
+}
+
+/* ---------- hero ---------- */
+.hero{text-align:center}
+.hero-cat{width:min(62vw,290px);height:auto;display:block;margin:0 auto}
+.wordmark{
+  font-size:clamp(3.2rem,14vw,5rem);line-height:1;letter-spacing:-.03em;
+  font-weight:300;margin:2rem 0 .75rem;
+}
+.tagline{color:var(--chalk-mid);margin:0;font-style:italic;font-size:1.05rem}
+
+/* ---------- ask ---------- */
+.ask-input{
+  width:100%;background:transparent;border:0;border-bottom:1px solid var(--chalk-faint);
+  color:var(--chalk);font-family:inherit;font-size:1.15rem;font-weight:300;
+  padding:.85rem 0;resize:none;line-height:1.5;margin-bottom:1rem;
+}
+.ask-input::placeholder{color:var(--chalk-low)}
+.ask-input:focus{outline:none;border-bottom-color:var(--blush-low)}
+.ask-row{display:flex;justify-content:space-between;align-items:center;gap:1rem}
+.count{font-family:"Space Mono",monospace;font-size:.6875rem;color:var(--chalk-low)}
+.btn{
+  font-family:"Space Mono",monospace;font-size:.75rem;letter-spacing:.14em;
+  background:transparent;color:var(--chalk-mid);
+  border:1px solid var(--chalk-faint);border-radius:999px;padding:.6rem 1.4rem;
+  cursor:pointer;transition:color .25s,border-color .25s;
+}
+.btn:hover:not(:disabled),.btn:focus-visible{color:var(--chalk);border-color:var(--blush-low)}
+.btn:disabled{opacity:.35;cursor:default}
+.answer{margin-top:3rem;min-height:2rem}
+.answer p{font-size:1.35rem;line-height:1.5;margin:0;opacity:0;animation:surface .8s ease forwards}
+@keyframes surface{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.answer .meta{font-family:"Space Mono",monospace;font-size:.6875rem;
+  letter-spacing:.14em;color:var(--chalk-low);margin-top:1.25rem}
+.answer .err{color:var(--chalk-mid);font-size:1rem;font-style:italic}
+.waiting{font-family:"Space Mono",monospace;font-size:.75rem;color:var(--chalk-low);letter-spacing:.1em}
+.waiting::after{content:"";animation:dots 1.6s steps(4,end) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+
+/* ---------- the cat you can bother ---------- */
+.pen{
+  position:relative;height:clamp(280px,58vw,360px);
+  display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--chalk-faint);border-radius:3px;overflow:hidden;
+}
+.stage{position:absolute;inset:0}
+.stage canvas{display:block}
+.glow{
+  position:absolute;width:66%;aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle,var(--blush) 0%,transparent 62%);
+  opacity:0;transition:opacity .6s ease;pointer-events:none;
+}
+.pen.happy .glow{opacity:.13}
+.pet-cat{width:clamp(130px,30vw,170px);height:auto;-webkit-user-select:none;user-select:none}
+.pen.fallback .stage{display:none}
+.pen.fallback .pet-cat{display:block}
+.pen.fallback.purring .pet-cat{animation:purr .28s ease-in-out infinite}
+@keyframes purr{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(.9px,-.9px,0)}}
+
+.spark{
+  position:absolute;font-family:"Space Mono",monospace;font-size:.8rem;
+  color:var(--blush);pointer-events:none;z-index:2;
+  animation:rise 1.3s ease-out forwards;
+}
+@keyframes rise{
+  0%{opacity:0;transform:translateY(0) scale(.9)}
+  20%{opacity:.9}
+  100%{opacity:0;transform:translateY(-52px) scale(1)}
+}
+
+.actions{display:flex;gap:.6rem;margin-top:1.25rem;flex-wrap:wrap}
+.actions .btn{flex:1;min-width:5.5rem}
+.says{margin-top:1.5rem;min-height:1.8rem;font-size:1.15rem;
+  color:var(--chalk-mid);font-style:italic}
+.says span{display:inline-block;animation:surface .5s ease}
+.hint{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.14em;
+  color:var(--chalk-low);margin-top:.9rem;text-transform:uppercase}
+
+/* ---------- cat mind ---------- */
+.mind-intro{color:var(--chalk-mid);margin:0 0 4rem;font-style:italic}
+.entry{
+  padding-left:3.25rem;position:relative;margin-bottom:5.5rem;
+  opacity:0;transform:translateY(10px);
+  transition:opacity .9s ease,transform .9s ease;
+}
+.entry.seen{opacity:1;transform:none}
+.entry:last-child{margin-bottom:0}
+.entry .n{position:absolute;left:0;top:.45rem;font-family:"Space Mono",monospace;
+  font-size:.6875rem;color:var(--chalk-low);letter-spacing:.08em}
+.entry p{margin:0;font-size:1.3rem;line-height:1.55}
+.entry time{display:block;margin-top:.9rem;font-family:"Space Mono",monospace;
+  font-size:.625rem;letter-spacing:.16em;text-transform:uppercase;color:var(--chalk-low)}
+.thread{position:absolute;left:.4rem;top:2rem;bottom:-5.5rem;width:1px;
+  background:linear-gradient(var(--chalk-faint),transparent)}
+.entry:last-child .thread{display:none}
+
+/* ---------- token ---------- */
+.ca{
+  display:flex;align-items:center;gap:.75rem;width:100%;background:transparent;
+  border:1px solid var(--chalk-faint);border-radius:2px;padding:1rem 1.15rem;
+  cursor:pointer;text-align:left;transition:border-color .25s;
+}
+.ca:hover,.ca:focus-visible{border-color:var(--blush-low)}
+.ca code{font-family:"Space Mono",monospace;font-size:.75rem;color:var(--chalk-mid);
+  word-break:break-all;line-height:1.5;flex:1}
+.ca .act{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.14em;
+  color:var(--chalk-low);white-space:nowrap;text-transform:uppercase}
+.links{display:flex;flex-wrap:wrap;gap:.75rem;margin-top:1.25rem}
+.links a{font-family:"Space Mono",monospace;font-size:.75rem;letter-spacing:.1em;
+  color:var(--chalk-mid);text-decoration:none;border:1px solid var(--chalk-faint);
+  border-radius:999px;padding:.6rem 1.3rem;transition:color .25s,border-color .25s}
+.links a:hover,.links a:focus-visible{color:var(--chalk);border-color:var(--blush-low)}
+
+footer{padding:13vh 0 8vh;text-align:center;position:relative;z-index:1}
+footer p{font-family:"Space Mono",monospace;font-size:.625rem;letter-spacing:.1em;
+  color:var(--chalk-low);margin:0 auto;max-width:30rem;line-height:2}
+a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
+  outline:1px solid var(--blush);outline-offset:3px}
+@media (prefers-reduced-motion:reduce){
+  *,*::after{animation:none!important;transition:none!important}
+  .entry{opacity:1;transform:none}
+  #meows span{animation:none!important}
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+<div id="meows" aria-hidden="true"></div>
+
+<main>
+
+<section class="hero wrap">
+  <picture>
+    <source srcset="/cark.webp" type="image/webp">
+    <img class="hero-cat" src="/cark.png" width="760" height="760"
+         alt="cark, a chalk drawing of a cat face with pink cheeks on black" fetchpriority="high">
+  </picture>
+  <h1 class="wordmark">cark</h1>
+  <p class="tagline">a cat that answers questions it does not understand</p>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">ask cark</p>
+  <textarea id="q" class="ask-input" rows="2" maxlength="280"
+    placeholder="ask it something. it will not help."></textarea>
+  <div class="ask-row">
+    <span class="count mono" id="count">280</span>
+    <button class="btn" id="send">ask</button>
+  </div>
+  <div class="answer" id="answer" aria-live="polite"></div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">bother the cat</p>
+  <div class="pen" id="pen" role="img" aria-label="A three dimensional cark you can pet, feed and play with">
+    <div class="glow"></div>
+    <div class="stage" id="stage"></div>
+    <img class="pet-cat" id="petCat" src="/cark.webp" alt="cark" draggable="false" hidden>
+  </div>
+  <div class="actions">
+    <button class="btn" data-act="pet">pet</button>
+    <button class="btn" data-act="feed">feed</button>
+    <button class="btn" data-act="play">play</button>
+  </div>
+  <p class="says" id="says" aria-live="polite"></p>
+  <p class="hint mono">tap the cat. drag to turn it around</p>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">cat mind</p>
+  <p class="mind-intro">Every few hours cark has a thought. Each one remembers the
+    last. Read from the top and it is a diary. Read from the bottom and it is
+    whatever is happening right now.</p>
+  <div id="mind"></div>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow">token</p>
+  <button class="ca" id="ca" aria-label="Copy the contract address">
+    <code id="caText">Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump</code>
+    <span class="act" id="caAct">copy</span>
+  </button>
+  <div class="links">
+    <a href="https://x.com/carkcatmeow" target="_blank" rel="noopener">x</a>
+    <a href="https://dexscreener.com/solana/vtogs4xulm59uu6wqwda2pgecxj7rsfkpkqgbakvjwb" target="_blank" rel="noopener">chart</a>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <p>cark does not know what a token is and cannot advise you about one.
+     nothing here is financial advice.</p>
+</footer>
+
+<script src="/cat3d.js"></script>
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- ambient meows ---------- */
+  (function meows(){
+    var words = ["meow","mrrp","mrow","mew","prrp","brrt","hrrn","nyah","mrr",
+                 "chirp","prrt","mao","meow","mrrp","mrrrp","mrp"];
+    var layer = document.getElementById("meows");
+    var count = window.innerWidth < 640 ? 26 : 46;
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < count; i++){
+      var s = document.createElement("span");
+      s.textContent = words[Math.floor(Math.random()*words.length)];
+      s.style.left = (Math.random()*100).toFixed(2) + "%";
+      s.style.top = (Math.random()*100).toFixed(2) + "%";
+      s.style.fontSize = (0.6 + Math.random()*1.7).toFixed(2) + "rem";
+      s.style.opacity = (0.018 + Math.random()*0.045).toFixed(3);
+      s.style.setProperty("--rot", (Math.random()*40 - 20).toFixed(1) + "deg");
+      s.style.animationDuration = (14 + Math.random()*22).toFixed(1) + "s";
+      s.style.animationDelay = "-" + (Math.random()*20).toFixed(1) + "s";
+      frag.appendChild(s);
+    }
+    layer.appendChild(frag);
+  })();
+
+  /* ---------- ask ---------- */
+  var q = document.getElementById("q"), send = document.getElementById("send"),
+      answer = document.getElementById("answer"), count = document.getElementById("count"),
+      busy = false;
+
+  function updateCount(){ count.textContent = 280 - q.value.length; }
+  q.addEventListener("input", updateCount); updateCount();
+  q.addEventListener("keydown", function(e){
+    if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); ask(); }
+  });
+  send.addEventListener("click", ask);
+
+  function ask(){
+    var text = q.value.trim();
+    if (!text || busy) return;
+    busy = true; send.disabled = true;
+    answer.innerHTML = '<p class="waiting mono">cark is looking at you</p>';
+    fetch("/api/ask", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ question:text })
+    })
+    .then(function(r){ return r.json().then(function(d){
+      if (!r.ok) throw new Error(d.error || "cark did not answer"); return d; }); })
+    .then(function(d){
+      answer.innerHTML = "";
+      var p = document.createElement("p"); p.textContent = d.answer; answer.appendChild(p);
+      var m = document.createElement("div"); m.className = "meta mono";
+      m.textContent = "\u2014 " + (d.mode || "cark"); answer.appendChild(m);
+    })
+    .catch(function(err){
+      answer.innerHTML = "";
+      var p = document.createElement("p"); p.className = "err";
+      p.textContent = err.message === "Failed to fetch"
+        ? "The connection dropped before cark replied. Try again." : err.message;
+      answer.appendChild(p);
+    })
+    .finally(function(){ busy = false; send.disabled = false; });
+  }
+
+  /* ---------- bother the cat ----------
+     Repeating an action wears cark out. That is the whole joke and it is also
+     just how cats work, so the copy pools are ordered by patience remaining. */
+  var pen = document.getElementById("pen"),
+      stage = document.getElementById("stage"),
+      says = document.getElementById("says");
+
+  var tally = { pet:0, feed:0, play:0 }, locked = false, sleepTimer = null;
+  var use3d = !reduced && window.CarkCat && window.CarkCat.init(stage);
+  if (!use3d) pen.classList.add("fallback");
+
+  var LINES = {
+    pet: [
+      "prrp", "mrrp", "thats fine",
+      "ok thats enough", "youre still doing it",
+      "im going to bite you in a minute", "fine. keep going i guess"
+    ],
+    feed: [
+      "mrow", "i already ate. put it down anyway",
+      "ill have it later. leave it", "im not hungry. leave it",
+      "theres food in the bowl and im telling you theres no food",
+      "you have fed me four times. i remember none of them"
+    ],
+    play: [
+      "brrt", "got it", "missed", "i wasnt trying",
+      "ok im tired", "you go get it", "im lying down now. bring it here"
+    ]
+  };
+
+  function speak(text){
+    says.innerHTML = "";
+    var s = document.createElement("span");
+    s.textContent = text;
+    says.appendChild(s);
+  }
+
+  function spark(text){
+    if (reduced) return;
+    var el = document.createElement("div");
+    el.className = "spark";
+    el.textContent = text;
+    el.style.left = (36 + Math.random()*28) + "%";
+    el.style.top  = (30 + Math.random()*18) + "%";
+    pen.appendChild(el);
+    setTimeout(function(){ el.remove(); }, 1300);
+  }
+
+  function wake(){
+    if (use3d) window.CarkCat.wake();
+    clearTimeout(sleepTimer);
+    sleepTimer = setTimeout(function(){
+      if (use3d) window.CarkCat.sleep();
+      speak("asleep");
+    }, 24000);
+  }
+
+  var DURATION = { pet:1700, feed:2500, play:2700 };
+
+  function act(name){
+    if (locked) return;
+    locked = true;
+    wake();
+
+    var pool = LINES[name];
+    speak(pool[Math.min(tally[name], pool.length - 1)]);
+    tally[name]++;
+
+    if (name === "pet"){
+      pen.classList.add("happy");
+      if (use3d) window.CarkCat.pet(); else pen.classList.add("purring");
+      spark("prrp");
+    } else if (name === "feed"){
+      pen.classList.add("happy");
+      if (use3d) window.CarkCat.feed();
+    } else {
+      if (use3d) window.CarkCat.play();
+      setTimeout(function(){ spark("brrt"); }, 1900);
+    }
+
+    setTimeout(function(){
+      pen.classList.remove("happy","purring");
+      locked = false;
+    }, DURATION[name]);
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-act]"), function(b){
+    b.addEventListener("click", function(){ act(b.getAttribute("data-act")); });
+  });
+
+  /* the canvas reports taps back through this, so a drag never counts as a pet */
+  window.__carkTap = function(){ act("pet"); };
+  document.getElementById("petCat").addEventListener("click", function(){ act("pet"); });
+  wake();
+
+  /* ---------- cat mind ---------- */
+  var SEED = [
+    {text:"i have been given a window and i sit at it. thats the arrangement as i understand it",date:null},
+    {text:"the bird came back today. same one. we did the same thing we always do and nothing happened again",date:null},
+    {text:"ive worked out that the window doesnt open. i knew that. i think i wanted to check",date:null},
+    {text:"people started talking to me through the small bright rectangle. i dont know how they got in there",date:null},
+    {text:"they ask me things. i answer. nobody has told me if im right",date:null}
+  ];
+
+  function render(entries){
+    var mind = document.getElementById("mind");
+    mind.innerHTML = "";
+    entries.forEach(function(t, i){
+      var e = document.createElement("article"); e.className = "entry";
+      var n = document.createElement("span"); n.className = "n mono";
+      n.textContent = String(i + 1).padStart(3, "0"); e.appendChild(n);
+      var thread = document.createElement("span"); thread.className = "thread"; e.appendChild(thread);
+      var p = document.createElement("p"); p.textContent = t.text; e.appendChild(p);
+      if (t.date){
+        var d = new Date(t.date);
+        if (!isNaN(d)){
+          var time = document.createElement("time");
+          time.dateTime = t.date;
+          time.textContent = d.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
+          e.appendChild(time);
+        }
+      }
+      mind.appendChild(e);
+    });
+    reveal();
+  }
+
+  function reveal(){
+    var items = document.querySelectorAll(".entry");
+    if (!("IntersectionObserver" in window)){
+      Array.prototype.forEach.call(items, function(el){ el.classList.add("seen"); });
+      return;
+    }
+    var io = new IntersectionObserver(function(rows){
+      rows.forEach(function(row){
+        if (row.isIntersecting){ row.target.classList.add("seen"); io.unobserve(row.target); }
+      });
+    }, {rootMargin:"0px 0px -12% 0px"});
+    Array.prototype.forEach.call(items, function(el){ io.observe(el); });
+  }
+
+  fetch("/thoughts.json", {cache:"no-cache"})
+    .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+    .then(function(d){
+      var list = Array.isArray(d) ? d : d.thoughts;
+      render(list && list.length ? list : SEED);
+    })
+    .catch(function(){ render(SEED); });
+
+  /* ---------- contract address ---------- */
+  var ca = document.getElementById("ca"), caText = document.getElementById("caText"),
+      caAct = document.getElementById("caAct");
+  ca.addEventListener("click", function(){
+    var value = caText.textContent.trim();
+    function done(){
+      caAct.textContent = "copied";
+      setTimeout(function(){ caAct.textContent = "copy"; }, 1800);
+    }
+    function fallback(){
+      var t = document.createElement("textarea");
+      t.value = value; t.setAttribute("readonly","");
+      t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.appendChild(t); t.select();
+      try { document.execCommand("copy"); done(); }
+      catch(e){ caAct.textContent = "select it"; }
+      document.body.removeChild(t);
+    }
+    if (navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(value).then(done, fallback);
+    } else { fallback(); }
+  });
+})();
+</script>
+</body>
+</html>
