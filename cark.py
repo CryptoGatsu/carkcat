@@ -1747,8 +1747,23 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
 
 def tick(conn, ai, x, user_id, force=False):
     now = time.time()
+
+    # the body clock runs first, everything below is scaled by it
+    last_drift = float(get_state(conn, "last_drift", now))
+    drift_needs(conn, (now - last_drift) / 60)
+    set_state(conn, "last_drift", now)
+    update_presence(conn, force=force)
+
+    act = activity()
+    asleep = is_asleep()
+    needs = get_needs(conn)
+
+    # a needy cat posts sooner. a sleeping one does not post at all.
+    gap = POST_EVERY_MIN * 60 / max(act, 0.05)
+    gap *= 1.0 - min(needs["attention"], 0.9) * 0.45
+
     last_post = float(get_state(conn, "last_post", 0))
-    if force or now - last_post > POST_EVERY_MIN * 60:
+    if force or (not asleep and now - last_post > gap):
         try:
             post_original(conn, ai, x)
             set_state(conn, "last_post", now)
@@ -1767,9 +1782,9 @@ def tick(conn, ai, x, user_id, force=False):
             log.error("diary failed: %s", e)
         set_state(conn, "last_diary_check", now)
 
+    # asleep cark still checks mentions, just rarely, and mostly declines
     last_mention = float(get_state(conn, "last_mention", 0))
     backoff = float(get_state(conn, "mention_backoff", 1))
-    # asleep cark still checks, just rarely, and mostly declines to answer
     sleep_factor = 4.0 if asleep else 1.0
     if force or now - last_mention > MENTION_EVERY_MIN * 60 * backoff * sleep_factor:
         handle_mentions(conn, ai, x, user_id)
