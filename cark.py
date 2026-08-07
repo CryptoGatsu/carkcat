@@ -84,7 +84,12 @@ MEDIA_DIR = os.getenv("CARK_MEDIA_DIR", "media")
 TOKEN_CA = os.getenv("CARK_TOKEN_CA", "Ek5APDNt78rqqEQyRiz8rQgFn3utNQr5rWhw6V5wpump")
 
 # chained thoughts for the cat mind section on the site
-THINK_EVERY_MIN = int(os.getenv("CARK_THINK_EVERY_MIN", "360"))
+# the diary is not on a schedule. pressure builds from things happening and
+# cark writes when it has enough to write about.
+DIARY_PRESSURE_TO_WRITE = float(os.getenv("CARK_DIARY_PRESSURE", "9"))
+DIARY_MIN_GAP_MIN = int(os.getenv("CARK_DIARY_MIN_GAP_MIN", "75"))
+DIARY_MAX_GAP_HOURS = int(os.getenv("CARK_DIARY_MAX_GAP_H", "26"))
+DIARY_DRIFT_PER_HOUR = float(os.getenv("CARK_DIARY_DRIFT", "0.5"))
 THOUGHT_CHAIN_DEPTH = int(os.getenv("CARK_THOUGHT_CHAIN_DEPTH", "6"))
 THOUGHTS_JSON = os.getenv("CARK_THOUGHTS_JSON", "")
 
@@ -586,6 +591,9 @@ def db():
         conversation_id TEXT, tweet_id TEXT, role TEXT,
         handle TEXT, text TEXT, created_at TEXT)""")
     conn.execute("""CREATE INDEX IF NOT EXISTS idx_convo ON convo(conversation_id, id)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT, weight REAL, detail TEXT, created_at TEXT, used INTEGER DEFAULT 0)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS thoughts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         text TEXT, created_at TEXT)""")
@@ -861,6 +869,70 @@ def thread_context(conn, m, refs):
 # context, so reading top to bottom is a diary rather than a pile of one liners.
 # The seed is what cark's life was before anyone was watching.
 
+# what moves the needle. a coin being pitched is a bigger day than a reply.
+EVENT_WEIGHT = {
+    "posted": 1.0,
+    "replied": 0.6,
+    "conversation": 1.8,      # somebody stayed and kept talking
+    "drew": 1.2,
+    "pitched": 2.5,
+    "ignored": 0.8,           # a long quiet stretch is also something
+}
+
+
+def note_event(conn, kind, detail="", weight=None):
+    """Something happened. The diary decides later whether it mattered."""
+    conn.execute(
+        "INSERT INTO events (kind, weight, detail, created_at) VALUES (?,?,?,?)",
+        (kind, weight if weight is not None else EVENT_WEIGHT.get(kind, 0.5),
+         (detail or "")[:280], datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
+def last_entry_at(conn):
+    row = conn.execute(
+        "SELECT created_at FROM thoughts ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return None
+    try:
+        return datetime.fromisoformat(row[0])
+    except Exception:
+        return None
+
+
+def diary_pressure(conn):
+    """Unused event weight, plus a slow drift so a quiet week still gets written
+    about eventually. Returns (pressure, hours_since_last)."""
+    since = last_entry_at(conn)
+    now = datetime.now(timezone.utc)
+    hours = (now - since).total_seconds() / 3600 if since else 999
+
+    row = conn.execute("SELECT COALESCE(SUM(weight),0) FROM events WHERE used = 0").fetchone()
+    return (row[0] or 0) + hours * DIARY_DRIFT_PER_HOUR, hours
+
+
+def wants_to_write(conn):
+    pressure, hours = diary_pressure(conn)
+    if hours * 60 < DIARY_MIN_GAP_MIN:
+        return False, pressure, hours          # too soon, it just wrote
+    if hours >= DIARY_MAX_GAP_HOURS:
+        return True, pressure, hours           # a day is a day, write something
+    return pressure >= DIARY_PRESSURE_TO_WRITE, pressure, hours
+
+
+def unused_events(conn, limit=14):
+    return conn.execute(
+        "SELECT id, kind, detail, created_at FROM events WHERE used = 0 "
+        "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+
+def mark_events_used(conn, ids):
+    if not ids:
+        return
+    conn.executemany("UPDATE events SET used = 1 WHERE id = ?", [(i,) for i in ids])
+    conn.commit()
+
+
 THOUGHT_SEED = [
     "i have been given a window and i sit at it. thats the arrangement as i understand it",
     "the bird came back today. same one. we did the same thing we always do and nothing happened again",
@@ -870,23 +942,44 @@ THOUGHT_SEED = [
 THINK_SYSTEM = SYSTEM + """
 
 RIGHT NOW
-you are writing in a private notebook, not posting. nobody is going to reply.
-this is the one place you are allowed to be a little longer, up to about 25 words.
-you are still flat. you still dont resolve anything."""
+this is your diary. nobody is going to reply to it and you are not performing.
+it is the one place you are allowed to be a little longer, up to about 25 words.
 
-THINK_PROMPT = """these are your last thoughts, oldest first:
+you write in it when something has happened, so write about what happened. get
+it slightly wrong. dont list things, pick the one that stuck and ignore the rest.
+if what happened was nothing, write about the nothing, that is also a day.
+
+you are still flat. you still dont resolve anything and you never end on a
+question. no dates, no headings, no "today i". just the thing."""
+
+THINK_PROMPT = """your diary so far, oldest first:
 
 {chain}
 
-write the next one.
+{happened}
 
-it has to follow from those. carry something forward: the bird, the window, the
-box, the small bright rectangle, whatever you were last on. you can change your
-mind about something you said before. you can notice that nothing has changed.
+write the next entry.
 
-dont summarise the earlier thoughts. dont start with "still" or "again" every
-time. dont resolve anything and dont end on a question. concrete, specific,
-unfinished. output the thought only."""
+it has to follow from the earlier ones. carry something forward: the bird, the
+window, the box, the small bright rectangle, whoever keeps talking to you. you
+can change your mind about something you said before. you can notice that
+nothing has changed.
+
+dont summarise the earlier entries. dont start with "still" or "again" every
+time. dont mention anyone by handle. concrete, specific, unfinished.
+output the entry only."""
+
+HAPPENED_NONE = """since your last entry nothing has happened that you noticed.
+write about that, or about something you have been looking at the whole time."""
+
+EVENT_PHRASING = {
+    "posted": "you said something out loud",
+    "replied": "you answered somebody",
+    "conversation": "somebody stayed and kept talking to you",
+    "drew": "a picture of you appeared",
+    "pitched": "somebody tried to show you a coin",
+    "ignored": "a long stretch where nobody came",
+}
 
 
 def recent_thoughts(conn, n=None):
@@ -913,11 +1006,36 @@ def seed_thoughts(conn):
     log.info("seeded %d opening thoughts", len(THOUGHT_SEED))
 
 
-def think(conn, ai):
-    """Generate the next thought in the chain and store it."""
+def think(conn, ai, force=False):
+    """Write the next diary entry, if cark has anything to write about."""
     seed_thoughts(conn)
+
+    if not force:
+        wants, pressure, hours = wants_to_write(conn)
+        if not wants:
+            log.info("nothing to write yet (pressure %.1f/%.1f, %.1fh since last)",
+                     pressure, DIARY_PRESSURE_TO_WRITE, hours)
+            return None
+
     chain = recent_thoughts(conn)
-    prompt = THINK_PROMPT.format(chain="\n".join(f"- {t}" for t in chain))
+    events = unused_events(conn)
+
+    if events:
+        lines, seen = [], set()
+        for _id, kind, detail, _at in events:
+            phrase = EVENT_PHRASING.get(kind, kind)
+            key = (kind, detail[:40])
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {phrase}" + (f": {detail}" if detail else ""))
+        happened = ("since your last entry, this happened. it is in the order it "
+                    "happened, most recent first:\n" + "\n".join(lines[:10]))
+    else:
+        happened = HAPPENED_NONE
+
+    prompt = THINK_PROMPT.format(chain="\n".join(f"- {t}" for t in chain),
+                                 happened=happened)
 
     for attempt in range(1, GEN_ATTEMPTS + 1):
         try:
@@ -939,7 +1057,8 @@ def think(conn, ai):
             conn.execute("INSERT INTO thoughts (text, created_at) VALUES (?, ?)",
                          (text, datetime.now(timezone.utc).isoformat()))
             conn.commit()
-            log.info("thought #%d: %s",
+            mark_events_used(conn, [e[0] for e in events])
+            log.info("diary #%d: %s",
                      conn.execute("SELECT COUNT(*) FROM thoughts").fetchone()[0], text)
             return text
 
@@ -1132,6 +1251,9 @@ def post_original(conn, ai, x):
 
     tid = resp.data["id"]
     record_post(conn, tid, "original", mode_name, text)
+    note_event(conn, "posted", text)
+    if media_ids:
+        note_event(conn, "drew", f"in mode {mode_name}")
     log.info("posted %s [%s]%s: %s", tid, mode_name,
              " +image" if media_ids else "", text)
     return tid
@@ -1230,6 +1352,9 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
                         in_reply_to=str(m.id))
             remember_turn(conn, ctx["convo_id"], m.id, "them", handle, body)
             remember_turn(conn, ctx["convo_id"], resp.data["id"], "cark", HANDLE, text)
+            # a thread somebody stayed in is worth more to the diary than a ping
+            note_event(conn, "conversation" if ctx.get("prior") else "replied",
+                       body[:120])
             note_reply(conn, m.author_id, now)
             bump_replies_today(conn, now)
             log.info("replied to %s [%s]: %s", m.id, mode_name, text)
@@ -1251,14 +1376,15 @@ def tick(conn, ai, x, user_id, force=False):
         except Exception as e:
             log.error("original post failed: %s", e)
 
-    last_think = float(get_state(conn, "last_think", 0))
-    if force or now - last_think > THINK_EVERY_MIN * 60:
+    # checked often, written rarely. wants_to_write does the deciding.
+    last_check = float(get_state(conn, "last_diary_check", 0))
+    if force or now - last_check > 600:
         try:
-            if think(conn, ai) and THOUGHTS_JSON:
+            if think(conn, ai, force=force) and THOUGHTS_JSON:
                 export_thoughts(conn, THOUGHTS_JSON)
         except Exception as e:
-            log.error("thinking failed: %s", e)
-        set_state(conn, "last_think", now)
+            log.error("diary failed: %s", e)
+        set_state(conn, "last_diary_check", now)
 
     last_mention = float(get_state(conn, "last_mention", 0))
     backoff = float(get_state(conn, "mention_backoff", 1))
@@ -1279,7 +1405,9 @@ def main():
                     help="generate N images per mode to seed the media folder")
     ap.add_argument("--think", action="store_true",
                     help="generate the next thought in the chain")
-    ap.add_argument("--mind", action="store_true", help="print the whole chain")
+    ap.add_argument("--mind", action="store_true", help="print the whole diary")
+    ap.add_argument("--diary-status", action="store_true",
+                    help="how close cark is to wanting to write")
     ap.add_argument("--export-thoughts", metavar="PATH",
                     help="write thoughts.json for the website")
     ap.add_argument("--audit", action="store_true")
@@ -1315,6 +1443,22 @@ def main():
             print(f"       {created[:10]}\n")
         return
 
+    if args.diary_status:
+        seed_thoughts(conn)
+        wants, pressure, hours = wants_to_write(conn)
+        print(f"\n  pressure   {pressure:.1f} of {DIARY_PRESSURE_TO_WRITE}")
+        print(f"  last entry {hours:.1f} hours ago")
+        print(f"  wants to write: {'yes' if wants else 'no'}\n")
+        rows = unused_events(conn)
+        if rows:
+            print("  unwritten:")
+            for _i, kind, detail, at in rows:
+                print(f"    {at[11:16]}  {kind:13} {detail[:52]}")
+        else:
+            print("  nothing has happened since the last entry")
+        print()
+        return
+
     if args.export_thoughts:
         seed_thoughts(conn)
         export_thoughts(conn, args.export_thoughts)
@@ -1323,7 +1467,7 @@ def main():
     ai = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     if args.think:
-        text = think(conn, ai)
+        text = think(conn, ai, force=True)
         print(f"\n{text or 'failed'}\n")
         if text and THOUGHTS_JSON:
             export_thoughts(conn, THOUGHTS_JSON)
