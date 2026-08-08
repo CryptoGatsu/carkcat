@@ -1843,6 +1843,7 @@ def tick(conn, ai, x, user_id, force=False):
     if force or now - last_chain > chain.POLL_EVERY_SEC:
         set_state(conn, "last_chain", now)
         try:
+            chain.seed_from_history(conn)      # once, on first ever poll
             data = chain.update_level(conn)
             if data:
                 fp = f"{data['level']}|{data['feel']}|{data['event']}|{data['xp']}"
@@ -1884,6 +1885,12 @@ def main():
                     help="how close cark is to wanting to write")
     ap.add_argument("--nip", action="store_true", help="give cark catnip")
     ap.add_argument("--size", action="store_true", help="level, xp and how it feels")
+    ap.add_argument("--seed-level", action="store_true",
+                    help="start cark at a size matching the token's 24h history")
+    ap.add_argument("--set-level", type=int, metavar="N",
+                    help="put cark at a specific level")
+    ap.add_argument("--check-level", action="store_true",
+                    help="why the level is what it is")
     ap.add_argument("--alive", action="store_true",
                     help="where cark is and how it is doing right now")
     ap.add_argument("--day", action="store_true",
@@ -1923,6 +1930,44 @@ def main():
         for n, text, created in all_thoughts(conn):
             print(f"  {n:03d}  {text}")
             print(f"       {created[:10]}\n")
+        return
+
+    if args.check_level:
+        d = chain.diagnose(conn)
+        print()
+        print(f"  pair            {d['pair']}")
+        print(f"  reachable       {d['pair_reachable']}")
+        if d.get("buys_24") is not None:
+            print(f"  24h on chain    {d['buys_24']} buys / {d['sells_24']} sells")
+            print(f"  liquidity       ${d['liquidity']:,.0f}")
+        print(f"  seeded          {d['seeded']}")
+        print(f"  baseline saved  {d['baseline_buys']}")
+        print(f"  xp / level      {d['xp']:.0f} -> {d['level']}")
+        print(f"  publishing      "
+              f"{'configured' if SITE_URL and PUBLISH_SECRET else 'NOT configured'}")
+        print()
+        if not d["pair_reachable"]:
+            print("  the pair address is wrong or dexscreener is down.")
+        elif not d["seeded"]:
+            print("  run --seed-level to start from the token's own history.")
+        elif d["level"] == 0:
+            print("  cark is watching but has not seen enough buys yet.")
+        print()
+        return
+
+    if args.seed_level:
+        d = chain.seed_from_history(conn)
+        if not d:
+            print("\n  already seeded, or the pair could not be read\n")
+            return
+        publish("level", d)
+        print(f"\n  cark starts at level {d['level']} ({d['size']})\n")
+        return
+
+    if args.set_level is not None:
+        d = chain.set_level(conn, args.set_level)
+        publish("level", d)
+        print(f"\n  cark is now level {d['level']} ({d['size']})\n")
         return
 
     if args.size:

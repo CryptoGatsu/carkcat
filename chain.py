@@ -95,6 +95,15 @@ def poll_pair():
     }
 
 
+def xp_for_level(level):
+    """Total xp needed to sit at the start of a given level."""
+    step, acc = 100.0, 0.0
+    for _ in range(int(level)):
+        acc += step
+        step *= 1.25
+    return acc
+
+
 # ------------------------------------------------------------------ growth
 
 
@@ -195,6 +204,58 @@ def payload(conn, m, new_buys, new_sells):
         "event": event,
         "updated": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def seed_from_history(conn, weight=0.25):
+    """A token that has been trading a while should not be a kitten.
+
+    Grants xp from the 24h trade counts already on the pair, scaled down, so cark
+    starts at a size that matches how the token has actually been doing rather
+    than at zero. Only takes effect once.
+    """
+    if _get(conn, "chain_seeded"):
+        return None
+    m = poll_pair()
+    if not m:
+        return None
+
+    net = m["buys_24"] * XP_PER_BUY + m["sells_24"] * XP_PER_SELL
+    xp = max(0.0, net * weight)
+    _set(conn, "chain_xp", xp)
+    _set(conn, "chain_buys", m["buys_24"])
+    _set(conn, "chain_sells", m["sells_24"])
+    _set(conn, "chain_seeded", 1)
+    lvl, _, _ = level_for(xp)
+    _set(conn, "chain_peak", lvl)
+    log.info("seeded from 24h history: %d buys, %d sells -> level %d (%s)",
+             m["buys_24"], m["sells_24"], lvl, size_name(lvl))
+    return payload(conn, m, 0, 0)
+
+
+def set_level(conn, level):
+    """Put cark at a specific level by hand."""
+    xp = xp_for_level(level)
+    _set(conn, "chain_xp", xp)
+    _set(conn, "chain_peak", max(int(_get(conn, "chain_peak", 0)), int(level)))
+    _set(conn, "chain_seeded", 1)
+    log.info("cark set to level %d (%s)", level, size_name(level))
+    return current(conn)
+
+
+def diagnose(conn):
+    """Why is it zero."""
+    out = {"pair": PAIR, "chain": CHAIN}
+    m = poll_pair()
+    out["pair_reachable"] = m is not None
+    if m:
+        out["buys_24"] = m["buys_24"]
+        out["sells_24"] = m["sells_24"]
+        out["liquidity"] = m["liquidity"]
+    out["seeded"] = bool(_get(conn, "chain_seeded"))
+    out["baseline_buys"] = _get(conn, "chain_buys")
+    out["xp"] = float(_get(conn, "chain_xp", 0))
+    out["level"] = level_for(out["xp"])[0]
+    return out
 
 
 def current(conn):
