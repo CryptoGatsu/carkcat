@@ -164,6 +164,13 @@ section:first-of-type{padding-top:11vh}
   font-size:.5625rem;letter-spacing:.14em;color:var(--chalk-low);
   margin:.55rem 0 0;text-transform:uppercase;
 }
+.fill.hit{animation:barhit 1s ease-out}
+@keyframes barhit{
+  0%{box-shadow:0 0 18px var(--blush),0 0 4px var(--blush)}
+  100%{box-shadow:0 0 8px var(--blush-low)}
+}
+.fill.tick{animation:tick .8s ease-out}
+@keyframes tick{0%{box-shadow:0 0 18px var(--blush)}100%{box-shadow:0 0 8px var(--blush-low)}}
 .growth.sad .fill{background:var(--chalk-low);box-shadow:none}
 .growth.sad .lvl b{color:var(--chalk-mid)}
 .growth.up .lvl b{animation:pop 1.4s cubic-bezier(.2,1.6,.4,1)}
@@ -764,6 +771,13 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     document.getElementById("lvlBar").style.width =
       Math.max(2, Math.round((d.progress || 0) * 100)) + "%";
 
+    var bar = document.getElementById("lvlBar");
+    if (d.new_buys || d.new_sells){
+      bar.classList.remove("hit");
+      void bar.offsetWidth;                 // restart the animation
+      bar.classList.add("hit");
+    }
+
     var note = document.getElementById("lvlNote");
     if (d.new_buys)       note.textContent = d.new_buys + " new buys";
     else if (d.new_sells) note.textContent = d.new_sells + " new sells";
@@ -787,26 +801,63 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
         speak("something took some of me. i want it back");
       }
     } else if (lastXp !== null && d.xp !== lastXp){
-      // no level change, but trades happened since last look
-      if (d.new_buys) { if (use3d) window.CarkCat.buy(); spark("prrp"); }
-      else if (d.new_sells) { if (use3d) window.CarkCat.sell(); }
+      // no level change, but trades landed since the last look
+      if (d.xp > lastXp){
+        if (use3d) window.CarkCat.buy();
+        for (var b = 0; b < Math.min(d.new_buys || 1, 4); b++){
+          setTimeout(function(){ spark("prrp"); }, b * 220);
+        }
+      } else if (use3d) {
+        window.CarkCat.sell();
+      }
+      var barEl = document.getElementById("lvlBar");
+      barEl.classList.remove("tick");
+      void barEl.offsetWidth;              // restart the flash
+      barEl.classList.add("tick");
     }
     lastLevel = d.level;
     lastXp = d.xp;
   }
 
-  function loadGrowth(){
-    fetch("/api/state?k=level", {cache:"no-cache"})
-      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
-      .then(showGrowth)
-      .catch(function(){});
-  }
-  loadGrowth();
-  setInterval(function(){ if (!document.hidden) loadGrowth(); }, 30000);
+  /* Polls fast while trades are landing and eases off when nothing is
+     happening, so a buy shows up in seconds without hammering the endpoint
+     through a quiet night. */
+  var growthTimer = null, growthGap = 8000, growthQuiet = 0;
 
-  /* touching it means you are in charge now */
-  Array.prototype.forEach.call(document.querySelectorAll("[data-scene],[data-act]"),
-    function(b){ b.addEventListener("click", function(){ followingCark = false; }); });
+  function loadGrowth(){
+    fetch("/api/state?k=level&t=" + Date.now(), {cache:"no-store"})
+      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+      .then(function(d){
+        var moved = (d.xp !== lastXp) || (d.level !== lastLevel);
+        showGrowth(d);
+        if (moved){
+          growthQuiet = 0;
+          growthGap = 6000;              // something is happening, watch closely
+        } else {
+          growthQuiet++;
+          if (growthQuiet > 4) growthGap = Math.min(growthGap * 1.4, 45000);
+        }
+        scheduleGrowth();
+      })
+      .catch(function(){
+        growthGap = Math.min(growthGap * 1.6, 60000);
+        scheduleGrowth();
+      });
+  }
+
+  function scheduleGrowth(){
+    clearTimeout(growthTimer);
+    growthTimer = setTimeout(function(){
+      if (document.hidden) { scheduleGrowth(); return; }
+      loadGrowth();
+    }, growthGap);
+  }
+
+  loadGrowth();
+  /* coming back to the tab should show the truth immediately */
+  document.addEventListener("visibilitychange", function(){
+    if (!document.hidden){ growthGap = 6000; loadGrowth(); }
+  });
 
   /* ---------- cat mind ---------- */
   var SEED = [

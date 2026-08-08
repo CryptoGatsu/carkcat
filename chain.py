@@ -21,7 +21,7 @@ log = logging.getLogger("chain")
 
 PAIR = os.getenv("CARK_PAIR", "vtogs4xulm59uu6wqwda2pgecxj7rsfkpkqgbakvjwb")
 CHAIN = os.getenv("CARK_CHAIN", "solana")
-POLL_EVERY_SEC = int(os.getenv("CARK_CHAIN_POLL_SEC", "90"))
+POLL_EVERY_SEC = int(os.getenv("CARK_CHAIN_POLL_SEC", "25"))
 
 XP_PER_BUY = float(os.getenv("CARK_XP_BUY", "12"))
 XP_PER_SELL = float(os.getenv("CARK_XP_SELL", "-9"))

@@ -44,10 +44,13 @@ export default async function handler(req, res) {
     try {
       const out = await kv(`get/${encodeURIComponent(key)}`);
       if (!out || out.result == null) return res.status(404).json({ error: "empty" });
+        // the level moves with every trade, so it cannot sit in a cache
       res.setHeader("Cache-Control",
-        key === KEYS.presence || key === KEYS.level
-          ? "public, max-age=15, stale-while-revalidate=60"
-          : "public, max-age=30, stale-while-revalidate=300");
+        key === KEYS.level
+          ? "public, max-age=0, s-maxage=5, stale-while-revalidate=20"
+          : key === KEYS.presence
+            ? "public, max-age=15, stale-while-revalidate=60"
+            : "public, max-age=30, stale-while-revalidate=300");
       return res.status(200).json(JSON.parse(out.result));
     } catch (err) {
       console.error("state read failed:", err.message);
