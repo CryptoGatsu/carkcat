@@ -488,13 +488,62 @@ window.CarkCat = (function () {
     m.userData.drifters = drifters;
     scenes.mind = m;
 
+    /* ---- the walk. ground and posts scroll past, cark stays put ---- */
+    var wk = new THREE.Group();
+    var ground = poly([[-9, -1.5], [9, -1.5]], 0.3);
+    wk.add(ground);
+    wk.userData.props = [];
+    for (var q = 0; q < 9; q++) {
+      var prop = new THREE.Group();
+      var kind = q % 3;
+      if (kind === 0) {                       // a post
+        prop.add(poly([[0, -1.5], [0, -0.35]], 0.24));
+        prop.add(poly([[-0.14, -0.35], [0.14, -0.35]], 0.2));
+      } else if (kind === 1) {                // a bush
+        var bush = ring(0.34, 0.2, 16);
+        bush.position.y = -1.15;
+        bush.scale.set(1.4, 0.6, 1);
+        prop.add(bush);
+      } else {                                // tufts
+        for (var g = 0; g < 3; g++) {
+          var gx = -0.2 + g * 0.2;
+          prop.add(poly([[gx, -1.5], [gx + 0.05, -1.28], [gx + 0.1, -1.5]], 0.16));
+        }
+      }
+      prop.position.set(-9 + q * 2.3, 0, -0.4 - (q % 3) * 0.5);
+      wk.add(prop);
+      wk.userData.props.push(prop);
+    }
+    var far = poly([[-9, -0.75], [-5.5, -0.45], [-2, -0.8], [1.5, -0.4],
+                    [5, -0.78], [9, -0.55]], 0.1);
+    far.position.z = -3;
+    wk.add(far);
+    wk.position.z = -2.2;
+    scenes.walk = wk;
+
     for (var name in scenes) {
       scenes[name].visible = name === activeScene;
       scene.add(scenes[name]);
     }
   }
 
+  var walkSpeed = 0, walkPhase = 0;
+
   function animateScene(t) {
+    var wk = scenes.walk;
+    if (wk && wk.visible) {
+      walkPhase += walkSpeed * 0.016;
+      wk.userData.props.forEach(function (p) {
+        p.position.x -= walkSpeed * 0.016 * 2.2;
+        if (p.position.x < -9) p.position.x += 20.7;
+      });
+      if (walkSpeed > 0.05) {
+        // a plodding two beat, and a slight lean into the direction of travel
+        cat.position.y = Math.abs(Math.sin(walkPhase * 5)) * 0.055 * walkSpeed;
+        cat.rotation.z = Math.sin(walkPhase * 5) * 0.03 * walkSpeed;
+      }
+    }
+
     var w = scenes.window;
     if (w && w.visible && w.userData.bird) {
       var b = w.userData.bird;
@@ -769,6 +818,9 @@ window.CarkCat = (function () {
       frame();
       return true;
     },
+    /* 0 is a cat that has sat down, 1 is a cat that has agreed to walk */
+    setWalk: function (speed) { walkSpeed = Math.max(0, Math.min(1, speed)); },
+
     setScene: function (name) {
       if (!scenes[name]) return false;
       sceneName = name;
@@ -777,12 +829,16 @@ window.CarkCat = (function () {
     },
     scene: function () { return sceneName; },
 
+    /* 0 is a cat that has sat down, 1 is a cat that has agreed to walk */
+    setWalk: function (speed) { walkSpeed = Math.max(0, Math.min(1, speed)); },
+
     setScene: function (name) {
       if (!scenes[name]) return;
       activeScene = name;
       for (var k in scenes) scenes[k].visible = (k === name);
       /* the mind has no floor, so cark floats a little there */
       cat.position.z = name === "mind" ? -0.1 : 0;
+      if (name !== "walk") walkSpeed = 0;
     },
 
     /* catnip: total loss of composure, then a hard stop. rolls onto its back,

@@ -37,6 +37,8 @@ from facts import CAT_FACTS
 from imagery import build_image_prompt, SCENES
 from companies import COMPANIES, find_company
 import chain
+import inner
+import world
 
 try:
     from openai import OpenAI
@@ -311,6 +313,41 @@ MODES = {
         ],
     },
 
+    "fixation": {
+        "weight": {"original": 13, "reply": 5},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "the thing you are fixed on. report on it like an ongoing situation "
+                 "you are handling. new detail, or no new detail, either is fine. never "
+                 "explain what it is from scratch, you have been living with this. never "
+                 "resolve it and never ask anyone for help with it.",
+        "examples": [
+            "still there. i checked twice",
+            "it moved about an inch and nobody else has noticed",
+            "ive been sitting here since four. nothing yet",
+            "i heard it again. same time",
+            "no change to report",
+        ],
+    },
+
+    "weather": {
+        "weight": {"original": 8, "reply": 4},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "the sky. you are looking at it through glass and you have a position "
+                 "on it. never give numbers, never say the word weather, never forecast. "
+                 "you are reporting a condition that is happening to you personally.",
+        "examples": [
+            "its raining. the outside is cancelled and i had nothing planned anyway",
+            "the sun is on the floor in the good spot and i am already there",
+            "too hot to lie against the glass. thats been taken from me",
+            "everything out there is moving and none of it is alive",
+            "the sky is one colour today and its the boring one",
+        ],
+    },
+
     "catnip": {
         "weight": {"original": 7, "reply": 6},
         "contexts": {"original", "reply"},
@@ -503,6 +540,32 @@ def build_prompt(mode_name, fact=None, mention=None, ctx=None):
     ex = random.sample(mode["examples"], min(3, len(mode["examples"])))
 
     parts = []
+
+    fix = (ctx or {}).get("fixation")
+    if fix:
+        parts.append(f"you are currently fixed on this and have been for {fix['days']} "
+                     f"days: {fix['subject']}. it is not resolved. you do not have to "
+                     f"bring it up, but it is what is on your mind and it colours "
+                     f"everything.\n")
+    ended = (ctx or {}).get("fixation_ended")
+    if ended:
+        parts.append(f"you were fixed on this and it is over now: {ended['subject']}. "
+                     + (f"what happened: {ended['resolution']}.\n" if ended.get("resolution")
+                        else "you never found out and you have stopped caring.\n"))
+
+    beliefs = (ctx or {}).get("beliefs")
+    if beliefs:
+        parts.append("things you already think, from before:\n" +
+                     "\n".join(f"- {b['subject']} are {b['verdict']}"
+                                + (f", {b['why']}" if b.get("why") else "")
+                                for b in beliefs) +
+                     "\nyou still think these. dont explain when you formed them.\n")
+
+    wx = (ctx or {}).get("weather")
+    if wx:
+        parts.append(f"outside right now: {wx['temp']} degrees, {wx['kind']}. "
+                     f"how you feel about that: {wx['line']}\n")
+
     size = (ctx or {}).get("size")
     if size:
         parts.append(f"you are currently a {size['size']}. "
@@ -1394,8 +1457,25 @@ def think(conn, ai, force=False):
     else:
         happened = HAPPENED_NONE
 
+    extra = ""
+    try:
+        fix = inner.current_fixation(conn)
+        if fix:
+            extra += (f"\nyou are still fixed on this, {fix['days']} days now: "
+                      f"{fix['subject']}\n")
+        ended = recent_fixation_end(conn)
+        if ended:
+            extra += (f"\nyou have stopped caring about {ended['subject']}. "
+                      + (f"{ended['resolution']}\n" if ended.get("resolution")
+                         else "you never found out.\n"))
+        wx = world.weather()
+        if wx:
+            extra += f"\noutside: {wx['temp']} degrees, {wx['kind']}\n"
+    except Exception:
+        pass
+
     prompt = THINK_PROMPT.format(chain="\n".join(f"- {t}" for t in chain),
-                                 happened=happened)
+                                 happened=happened + extra)
 
     for attempt in range(1, GEN_ATTEMPTS + 1):
         try:
@@ -1612,6 +1692,17 @@ def resolve_user_id(conn, x):
     return uid
 
 
+def recent_fixation_end(conn):
+    raw = get_state(conn, "fixation_ended")
+    at = float(get_state(conn, "fixation_ended_at", 0))
+    if raw and time.time() - at < 7200:
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+    return None
+
+
 def compose(conn, ai, model, mention=None, ctx=None):
     """Pick a mode for this context, avoid repeating the last few, generate."""
     context = "reply" if mention else "original"
@@ -1621,6 +1712,19 @@ def compose(conn, ai, model, mention=None, ctx=None):
     ctx["nip"] = phase
     try:
         ctx["size"] = chain.current(conn)
+    except Exception:
+        pass
+    try:
+        ctx["fixation"] = inner.current_fixation(conn)
+        ctx["fixation_ended"] = recent_fixation_end(conn)
+        if mention:
+            ctx["beliefs"] = inner.relevant_beliefs(conn, mention)
+        elif random.random() < 0.35:
+            ctx["beliefs"] = inner.strongest_beliefs(conn, 2)
+    except Exception as e:
+        log.warning("inner life unavailable: %s", e)
+    try:
+        ctx["weather"] = world.weather()
     except Exception:
         pass
 
@@ -1790,6 +1894,12 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
                        body[:120])
             meet_need(conn, "attention", -0.18)
             meet_need(conn, "stimulation", 0.12)
+            # only on threads somebody stayed in, and not every time
+            if ctx.get("prior") and random.random() < 0.5:
+                try:
+                    inner.maybe_form_belief(conn, ai, body, handle)
+                except Exception as e:
+                    log.warning("belief check failed: %s", e)
             note_reply(conn, m.author_id, now)
             bump_replies_today(conn, now)
             log.info("replied to %s [%s]: %s", m.id, mode_name, text)
@@ -1812,6 +1922,35 @@ def tick(conn, ai, x, user_id, force=False):
 
     act = activity()
     asleep = is_asleep()
+
+    # the sky nudges the needs before anything reads them
+    try:
+        wx = world.weather()
+        nudge, prefer = world.weather_effect(wx)
+        for k, v in nudge.items():
+            meet_need(conn, k, v * 0.02)      # per tick, so it accumulates gently
+        if prefer and random.random() < 0.02:
+            set_state(conn, "place", prefer)
+    except Exception:
+        pass
+
+    # fixations turn over on their own schedule
+    last_fix = float(get_state(conn, "last_fix_check", 0))
+    if force or now - last_fix > 1800:
+        set_state(conn, "last_fix_check", now)
+        try:
+            inner.ensure(conn)
+            recent = [r[2] or r[1] for r in unused_events(conn, 8)]
+            cur, ended = inner.tick_fixation(conn, ai, recent)
+            if ended:
+                note_event(conn, "let_go",
+                           f"stopped caring about {ended['subject']}", weight=1.5)
+                set_state(conn, "fixation_ended", json.dumps(ended))
+                set_state(conn, "fixation_ended_at", now)
+            inner.fade_beliefs(conn)
+        except Exception as e:
+            log.error("fixation tick failed: %s", e)
+
     needs = get_needs(conn)
 
     # a needy cat posts sooner. a sleeping one does not post at all.
@@ -1891,6 +2030,9 @@ def main():
                     help="put cark at a specific level")
     ap.add_argument("--check-level", action="store_true",
                     help="why the level is what it is")
+    ap.add_argument("--inner", action="store_true",
+                    help="current fixation and what cark believes")
+    ap.add_argument("--weather", action="store_true", help="what it is doing outside")
     ap.add_argument("--alive", action="store_true",
                     help="where cark is and how it is doing right now")
     ap.add_argument("--day", action="store_true",
@@ -1988,6 +2130,43 @@ def main():
         else:
             print(f"\n  cant. cark is {phase} ({mins:.0f} min in)\n")
         update_presence(conn, force=True)
+        return
+
+    if args.inner:
+        inner.ensure(conn)
+        fix = inner.current_fixation(conn)
+        print()
+        if fix:
+            print(f"  fixed on   {fix['subject']}")
+            print(f"             day {fix['days']}, mentioned {fix['mentions']} times")
+        else:
+            print("  fixed on   nothing yet, runs on the next tick")
+        past = conn.execute(
+            "SELECT subject, status, resolution FROM fixations "
+            "WHERE status != 'active' ORDER BY id DESC LIMIT 4").fetchall()
+        if past:
+            print("\n  let go of")
+            for sub, st, res in past:
+                print(f"    {sub[:52]:<54} {res or st}")
+        bel = inner.strongest_beliefs(conn, 10)
+        if bel:
+            print("\n  believes")
+            for b in bel:
+                print(f"    {b['subject'][:22]:<24} {b['verdict']:<11} "
+                      f"{(b['why'] or '')[:40]}")
+        else:
+            print("\n  believes   nothing yet, forms these from conversations")
+        print()
+        return
+
+    if args.weather:
+        w = world.weather(force=True)
+        if not w:
+            print("\n  could not reach the sky\n")
+            return
+        print(f"\n  {w['temp']} degrees, {w['kind']}, {w['clouds']}% cloud, "
+              f"{w['wind']} mph wind")
+        print(f"  cark says: {w['line']}\n")
         return
 
     if args.alive:

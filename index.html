@@ -205,6 +205,14 @@ section:first-of-type{padding-top:11vh}
 .scene.on{color:var(--chalk);background:rgba(242,240,236,.045)}
 .actions{display:flex;gap:.6rem;margin-top:.75rem;flex-wrap:wrap}
 .actions .btn{flex:1;min-width:5.5rem}
+.actions .wide{flex:1 1 100%}
+.walk{margin-top:1rem;border:1px solid var(--chalk-faint);border-radius:3px;
+  padding:1rem 1.1rem}
+.walk-top{display:flex;justify-content:space-between;align-items:baseline;
+  margin-bottom:.6rem;font-size:.6875rem;letter-spacing:.1em;color:var(--chalk-mid)}
+.walk-top .dim{color:var(--chalk-low);font-size:.625rem}
+.walkfill{background:var(--chalk-mid);box-shadow:none}
+.walk-acts{margin-top:.9rem}
 .actions .nip{border-color:var(--blush-low);color:var(--blush)}
 .actions .nip:hover:not(:disabled){color:var(--chalk);border-color:var(--blush)}
 .actions .nip:disabled{border-color:var(--chalk-faint);color:var(--chalk-low);opacity:1}
@@ -338,6 +346,21 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
     <button class="btn" data-act="feed">feed</button>
     <button class="btn" data-act="play">play</button>
     <button class="btn nip" data-act="nip">catnip</button>
+  </div>
+  <div class="actions">
+    <button class="btn wide" id="walkBtn">take cark for a walk</button>
+  </div>
+  <div class="walk" id="walkPanel" hidden>
+    <div class="walk-top">
+      <span class="mono" id="walkDist">0 steps</span>
+      <span class="mono dim" id="walkState">waiting</span>
+    </div>
+    <div class="bar"><div class="fill walkfill" id="walkBar"></div></div>
+    <div class="actions walk-acts">
+      <button class="btn" id="coax">come on</button>
+      <button class="btn" id="carry">pick him up</button>
+      <button class="btn ghost" id="goHome">go home</button>
+    </div>
   </div>
   <p class="says" id="says" aria-live="polite"></p>
   <p class="hint mono">tap the cat. drag to turn it around</p>
@@ -715,6 +738,109 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
   }
   setInterval(refreshNip, 4000);
   refreshNip();
+
+  /* ---------- the walk ----------
+     A cat on a walk mostly does not walk. Progress comes in short bursts
+     between long refusals, and the refusals are the point. */
+  var walking = false, steps = 0, walkTimer = null, walkMood = "waiting",
+      carried = false, TARGET = 60;
+
+  var WALK = {
+    go:      ["ok", "fine", "moving", "im walking. dont say anything"],
+    stop:    ["no", "im sitting down now", "ive stopped and i wont say why",
+              "this is far enough", "im looking at something"],
+    spook:   ["something moved", "there was a noise and im dealing with it",
+              "im under a bush now. dont", "a bag went past me"],
+    smell:   ["theres a smell here and im not finished with it",
+              "someone else has been on this post", "this needs a while"],
+    refuse:  ["no", "im not doing that", "youve seen me walk. thats it",
+              "the ground is wrong here"],
+    carried: ["fine. carry me then", "this is the correct way to travel",
+              "i have given up and so should you"],
+    home:    ["good", "that was enough outside", "im going in. dont follow"],
+    done:    ["we went too far", "i can see the house from here and i want to be in it"]
+  };
+
+  function walkSay(pool){
+    var p = WALK[pool];
+    speak(p[Math.floor(Math.random() * p.length)]);
+    walkMood = pool;
+    document.getElementById("walkState").textContent = pool;
+  }
+
+  function walkTick(){
+    if (!walking) return;
+    var roll = Math.random();
+    var moving = false;
+
+    if (carried){
+      steps += 3;
+      moving = true;
+      if (Math.random() < 0.25) walkSay("carried");
+    } else if (roll < 0.42){
+      steps += 1 + Math.floor(Math.random() * 3);
+      moving = true;
+      if (Math.random() < 0.4) walkSay("go");
+    } else if (roll < 0.62){
+      walkSay("stop");
+    } else if (roll < 0.76){
+      walkSay("smell");
+    } else if (roll < 0.86){
+      walkSay("spook");
+      if (use3d) window.CarkCat.sell();      // the flinch, reused
+    } else {
+      walkSay("refuse");
+    }
+
+    if (use3d) window.CarkCat.setWalk(moving ? (carried ? 1 : 0.7) : 0);
+
+    steps = Math.min(steps, TARGET);
+    document.getElementById("walkDist").textContent = steps + " steps";
+    document.getElementById("walkBar").style.width =
+      Math.round(steps / TARGET * 100) + "%";
+
+    if (steps >= TARGET){ walkSay("done"); setTimeout(endWalk, 2600); return; }
+    walkTimer = setTimeout(walkTick, 1800 + Math.random() * 1600);
+  }
+
+  function startWalk(){
+    if (walking) return;
+    walking = true; steps = 0; carried = false;
+    followingCark = false;
+    document.getElementById("walkPanel").hidden = false;
+    document.getElementById("walkBtn").disabled = true;
+    goTo("park", true);
+    if (use3d) window.CarkCat.setScene("walk");
+    speak("outside. on purpose. this was your idea");
+    walkTimer = setTimeout(walkTick, 1400);
+  }
+
+  function endWalk(){
+    walking = false; carried = false;
+    clearTimeout(walkTimer);
+    if (use3d){ window.CarkCat.setWalk(0); window.CarkCat.setScene("window"); }
+    goTo("window", true);
+    document.getElementById("walkPanel").hidden = true;
+    document.getElementById("walkBtn").disabled = false;
+    walkSay("home");
+    /* a walk is worth more than any button */
+    restless = 0;
+  }
+
+  document.getElementById("walkBtn").addEventListener("click", startWalk);
+  document.getElementById("goHome").addEventListener("click", endWalk);
+  document.getElementById("coax").addEventListener("click", function(){
+    if (!walking) return;
+    if (Math.random() < 0.45){ steps += 2; walkSay("go"); }
+    else walkSay("refuse");
+    document.getElementById("walkDist").textContent = steps + " steps";
+  });
+  document.getElementById("carry").addEventListener("click", function(){
+    if (!walking) return;
+    carried = !carried;
+    document.getElementById("carry").textContent = carried ? "put him down" : "pick him up";
+    walkSay(carried ? "carried" : "stop");
+  });
 
   window.__carkTap = function(){ act("pet"); };
   document.getElementById("petCat").addEventListener("click", function(){ act("pet"); });
