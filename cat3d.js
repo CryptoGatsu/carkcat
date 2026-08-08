@@ -65,7 +65,14 @@ window.CarkCat = (function () {
 
   /* growth. a bigger cark is literally bigger, and a sad one is smaller than
      it should be, which is more legible than any colour change. */
-  var grow = { target: 1, now: 1, feel: "fine", droop: 0, droopTarget: 0 };
+  var grow = {
+    target: 1, now: 1, feel: "fine", droop: 0, droopTarget: 0,
+    // the room grows with him, but slower than he does, so he is still visibly
+    // getting bigger relative to his own window rather than everything just
+    // zooming. the camera then pulls back far enough that he never clips out.
+    sceneTarget: 1, sceneNow: 1,
+    camBase: 5.3, camTarget: 5.3, camNow: 5.3
+  };
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -510,6 +517,8 @@ window.CarkCat = (function () {
     if (!w || !h) return;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
+    // a wide short frame is limited by vertical fov, so back off when squat
+    grow.camBase = 5.3 * (camera.aspect > 1.7 ? 1.14 : 1);
     camera.updateProjectionMatrix();
   }
 
@@ -536,6 +545,11 @@ window.CarkCat = (function () {
 
     grow.now += (grow.target - grow.now) * 0.04;
     grow.droop += (grow.droopTarget - grow.droop) * 0.05;
+
+    grow.sceneNow += (grow.sceneTarget - grow.sceneNow) * 0.04;
+    grow.camNow += (grow.camTarget - grow.camNow) * 0.04;
+    camera.position.z = grow.camNow;
+    for (var sk in scenes) scenes[sk].scale.setScalar(grow.sceneNow);
     var g = grow.now;
     cat.scale.set(g * (1 + breath), g * (1 - breath), g * (1 + breath));
 
@@ -731,8 +745,8 @@ window.CarkCat = (function () {
 
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-      camera.position.set(0, 0.05, 4.5);
-      camera.lookAt(0, -0.1, 0);
+      camera.position.set(0, 0.05, grow.camBase);
+      camera.lookAt(0, -0.05, 0);
       clock = new THREE.Clock();
 
       buildCat();
@@ -777,7 +791,10 @@ window.CarkCat = (function () {
 
     /* level 0 is a kitten, growth flattens out so a huge cark still fits */
     setSize: function (level, feel) {
-      grow.target = 1 + Math.min(Math.log10(1 + (level || 0)) * 0.42, 0.5);
+      var k = 1 + Math.min(Math.log10(1 + (level || 0)) * 0.42, 0.5);
+      grow.target = k;
+      grow.sceneTarget = 1 + (k - 1) * 0.4;     // room grows at 40% of his rate
+      grow.camTarget = grow.camBase * (1 + (k - 1) * 0.6);
       grow.feel = feel || "fine";
       grow.droopTarget = feel === "sad" ? 1 : 0;
     },
