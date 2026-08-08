@@ -36,6 +36,7 @@ from dotenv import load_dotenv
 from facts import CAT_FACTS
 from imagery import build_image_prompt, SCENES
 from companies import COMPANIES, find_company
+import chain
 
 try:
     from openai import OpenAI
@@ -291,6 +292,25 @@ MODES = {
         ],
     },
 
+    "size": {
+        "weight": {"original": 6, "reply": 4},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "guide": "you have noticed you are a different size than you were. you do not "
+                 "know why and you are not going to connect it to anything. you talk "
+                 "about it the way a cat would talk about the sun moving: it happened "
+                 "to you, you have no theory. never mention trading, buying, selling, "
+                 "coins or numbers going anywhere. you got bigger or you got smaller.",
+        "examples": [
+            "im bigger than i was on tuesday. nobody has said anything about it",
+            "i dont fit on the shelf i used to fit on",
+            "something is making me smaller and i want it to stop",
+            "ive been the same size for two days and i find that suspicious",
+            "the box still fits. thats the only measurement i trust",
+        ],
+    },
+
     "catnip": {
         "weight": {"original": 7, "reply": 6},
         "contexts": {"original", "reply"},
@@ -483,6 +503,15 @@ def build_prompt(mode_name, fact=None, mention=None, ctx=None):
     ex = random.sample(mode["examples"], min(3, len(mode["examples"])))
 
     parts = []
+    size = (ctx or {}).get("size")
+    if size:
+        parts.append(f"you are currently a {size['size']}. "
+                     + ("you got bigger recently and you have noticed.\n"
+                        if size.get("feel") == "happy" else
+                        "you have been getting smaller and you dont like it.\n"
+                        if size.get("feel") == "sad" else
+                        "you are the size you are.\n"))
+
     nip = (ctx or {}).get("nip", "fine")
     if nip in NIP_LINES:
         parts.append(NIP_LINES[nip] + "\n")
@@ -1080,23 +1109,44 @@ def presence(conn):
 
 
 def update_presence(conn, force=False):
-    """Pick a place if it is time to move, and push it to the site on change."""
+    """Pick a place if it is time to move, then publish only when something
+    actually changed. A tick happens every 30 seconds and cark's state changes
+    every few hours, so publishing unconditionally would be thousands of writes
+    a day for the same object."""
     place = get_state(conn, "place", "window")
     moved_at = float(get_state(conn, "place_since", 0))
     mins_here = (time.time() - moved_at) / 60 if moved_at else 999
 
-    # a settled cat stays put a while, a restless one does not
     needs = get_needs(conn)
     stay = 40 + needs["rest"] * 90 - needs["attention"] * 20
     if force or mins_here > stay:
-        new = choose_place(conn)
-        if new != place:
-            log.info("cark moved to the %s (%s)", new, mood_word(conn))
-            note_event(conn, "moved", f"went to the {new}", weight=0.4)
-        set_state(conn, "place", new)
+        new_place = choose_place(conn)
+        if new_place != place:
+            log.info("cark moved to the %s (%s)", new_place, mood_word(conn))
+            note_event(conn, "moved", f"went to the {new_place}", weight=0.4)
+        set_state(conn, "place", new_place)
         set_state(conn, "place_since", time.time())
 
-    publish("presence", presence(conn))
+    p = presence(conn)
+
+    # what counts as a change worth telling the site about
+    phase, _ = nip_phase(conn)
+    fingerprint = "|".join([
+        p["place"], str(p["asleep"]), p["mood"], phase,
+        # needs only matter to a tenth, they drift continuously
+        *(f"{k}{round(v, 1)}" for k, v in sorted(p["needs"].items())),
+    ])
+
+    last_fp = get_state(conn, "presence_fp", "")
+    last_at = float(get_state(conn, "presence_at", 0))
+    stale = time.time() - last_at > 1800          # refresh every half hour anyway
+
+    if not (force or stale or fingerprint != last_fp):
+        return
+
+    if publish("presence", p):
+        set_state(conn, "presence_fp", fingerprint)
+        set_state(conn, "presence_at", time.time())
 
 
 # people who keep turning up stop being strangers
@@ -1396,7 +1446,9 @@ def publish(key, payload):
             headers={"x-cark-key": PUBLISH_SECRET},
             timeout=15)
         if r.status_code == 200:
-            log.info("published %s to the site", key)
+            log.debug("published %s to the site", key)
+            if key != "presence":
+                log.info("published %s to the site", key)
             return True
         log.warning("publish %s failed: %s %s", key, r.status_code, r.text[:120])
     except Exception as e:
@@ -1567,6 +1619,10 @@ def compose(conn, ai, model, mention=None, ctx=None):
     phase, _ = nip_phase(conn)
     ctx = dict(ctx or {})
     ctx["nip"] = phase
+    try:
+        ctx["size"] = chain.current(conn)
+    except Exception:
+        pass
 
     # somebody said the word. that outranks everything else cark had planned.
     if mention and re.search(r"\b(catnip|nip|nepeta)\b", mention, re.I):
@@ -1782,6 +1838,26 @@ def tick(conn, ai, x, user_id, force=False):
             log.error("diary failed: %s", e)
         set_state(conn, "last_diary_check", now)
 
+    # the token watch. cheap, and level changes are worth knowing about fast.
+    last_chain = float(get_state(conn, "last_chain", 0))
+    if force or now - last_chain > chain.POLL_EVERY_SEC:
+        set_state(conn, "last_chain", now)
+        try:
+            data = chain.update_level(conn)
+            if data:
+                fp = f"{data['level']}|{data['feel']}|{data['event']}|{data['xp']}"
+                if fp != get_state(conn, "chain_fp", ""):
+                    set_state(conn, "chain_fp", fp)
+                    publish("level", data)
+                if data["event"] == "up":
+                    note_event(conn, "grew", f"got bigger, now a {data['size']}",
+                               weight=1.6)
+                    meet_need(conn, "attention", -0.2)
+                elif data["event"] == "down":
+                    note_event(conn, "shrank", "got smaller", weight=1.4)
+        except Exception as e:
+            log.error("chain watch failed: %s", e)
+
     # asleep cark still checks mentions, just rarely, and mostly declines
     last_mention = float(get_state(conn, "last_mention", 0))
     backoff = float(get_state(conn, "mention_backoff", 1))
@@ -1807,6 +1883,7 @@ def main():
     ap.add_argument("--diary-status", action="store_true",
                     help="how close cark is to wanting to write")
     ap.add_argument("--nip", action="store_true", help="give cark catnip")
+    ap.add_argument("--size", action="store_true", help="level, xp and how it feels")
     ap.add_argument("--alive", action="store_true",
                     help="where cark is and how it is doing right now")
     ap.add_argument("--day", action="store_true",
@@ -1846,6 +1923,17 @@ def main():
         for n, text, created in all_thoughts(conn):
             print(f"  {n:03d}  {text}")
             print(f"       {created[:10]}\n")
+        return
+
+    if args.size:
+        data = chain.update_level(conn) or chain.current(conn)
+        print(f"\n  level  {data['level']}  ({data['size']})")
+        print(f"  xp     {data.get('xp')}  {int(data.get('progress',0)*100)}% to next")
+        print(f"  peak   level {data.get('peak')}")
+        print(f"  feel   {data.get('feel')}")
+        if data.get("buys_24") is not None:
+            print(f"  24h    {data['buys_24']} buys / {data['sells_24']} sells")
+        print()
         return
 
     if args.nip:

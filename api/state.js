@@ -10,6 +10,7 @@ const KEYS = {
   thoughts: "cark:thoughts",
   trades: "cark:trades",
   presence: "cark:presence",
+  level: "cark:level",
 };
 
 const MAX_BODY = 400 * 1024;
@@ -44,7 +45,7 @@ export default async function handler(req, res) {
       const out = await kv(`get/${encodeURIComponent(key)}`);
       if (!out || out.result == null) return res.status(404).json({ error: "empty" });
       res.setHeader("Cache-Control",
-        key === KEYS.presence
+        key === KEYS.presence || key === KEYS.level
           ? "public, max-age=15, stale-while-revalidate=60"
           : "public, max-age=30, stale-while-revalidate=300");
       return res.status(200).json(JSON.parse(out.result));

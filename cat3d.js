@@ -63,6 +63,10 @@ window.CarkCat = (function () {
      pointer way off across the page still only turns the head so far. */
   var look = { x: 0, y: 0, live: false, at: 0 };
 
+  /* growth. a bigger cark is literally bigger, and a sad one is smaller than
+     it should be, which is more legible than any colour change. */
+  var grow = { target: 1, now: 1, feel: "fine", droop: 0, droopTarget: 0 };
+
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
   /* body language per place. at the window cark is settled, at the park it is
@@ -529,7 +533,20 @@ window.CarkCat = (function () {
 
     var tp = temper();
     var breath = Math.sin(t * tp.breath) * 0.011;
-    cat.scale.set(1 + breath, 1 - breath, 1 + breath);
+
+    grow.now += (grow.target - grow.now) * 0.04;
+    grow.droop += (grow.droopTarget - grow.droop) * 0.05;
+    var g = grow.now;
+    cat.scale.set(g * (1 + breath), g * (1 - breath), g * (1 + breath));
+
+    /* sad: ears down, head lowered, tail tucked, cheeks dim */
+    if (grow.droop > 0.01) {
+      head.position.y = 0.52 - grow.droop * 0.14;
+      ears.forEach(function (e, i) {
+        e.rotation.x = 0.55 * grow.droop;
+        e.rotation.z = (i === 0 ? 1 : -1) * -0.3 * (1 - grow.droop * 0.45);
+      });
+    }
 
     /* tail: slower and wider at the base, the curl holds its shape */
     for (var i = 0; i < tailBones.length; i++) {
@@ -548,7 +565,9 @@ window.CarkCat = (function () {
       e.rotation.x = state === "sleep" ? 0.4 : -tw * 0.1;
     });
 
-    var want = (state === "purr" || state === "eat") ? 1 : 0.92;
+    var want = (state === "purr" || state === "eat") ? 1
+             : grow.feel === "happy" ? 1
+             : grow.feel === "sad" ? 0.45 : 0.92;
     cheeks.forEach(function (c) { c.material.opacity += (want - c.material.opacity) * 0.08; });
 
     if (state === "idle") {
@@ -597,6 +616,19 @@ window.CarkCat = (function () {
       toy.position.set(Math.cos(a) * 1.3, 0.5 + Math.sin(a * 1.7) * 0.45, 0.9 + Math.sin(a) * 0.3);
       head.rotation.y = Math.atan2(toy.position.x, 1.7) * 0.75;
       head.rotation.x = -Math.atan2(toy.position.y - 0.6, 1.7) * 0.55;
+    }
+
+    if (state === "levelup") {
+      var lu = 1 - Math.max(0, (stateUntil - t) / 2.2);
+      cat.position.y = Math.abs(Math.sin(lu * Math.PI * 3)) * 0.45 * (1 - lu);
+      cat.rotation.y = spin + Math.sin(lu * Math.PI * 2) * 0.5;
+      cheeks.forEach(function (c) { c.material.opacity = 1; });
+    }
+
+    if (state === "leveldown") {
+      var ld = 1 - Math.max(0, (stateUntil - t) / 2.0);
+      cat.position.y = -0.16 * Math.sin(ld * Math.PI);
+      head.rotation.x = 0.4 * Math.sin(ld * Math.PI);
     }
 
     if (state === "nip") {
@@ -742,6 +774,17 @@ window.CarkCat = (function () {
     /* catnip: total loss of composure, then a hard stop. rolls onto its back,
        spins, cannot hold a pose, then flops and stays flopped. */
     nip: function () { setState("nip", 5.2); },
+
+    /* level 0 is a kitten, growth flattens out so a huge cark still fits */
+    setSize: function (level, feel) {
+      grow.target = 1 + Math.min(Math.log10(1 + (level || 0)) * 0.42, 0.5);
+      grow.feel = feel || "fine";
+      grow.droopTarget = feel === "sad" ? 1 : 0;
+    },
+    levelUp:   function () { setState("levelup", 2.2); },
+    levelDown: function () { setState("leveldown", 2.0); },
+    buy:  function () { setState("purr", 1.2); },
+    sell: function () { setState("leveldown", 1.2); },
 
     pet:  function () { setState("purr", 1.6); },
     feed: function () { bowl.visible = true; setState("eat", 2.4); },

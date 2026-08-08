@@ -147,6 +147,33 @@ section:first-of-type{padding-top:11vh}
   100%{opacity:0;transform:translateY(-52px) scale(1)}
 }
 
+.growth{margin:-.5rem 0 1.5rem}
+.growth-top{display:flex;justify-content:space-between;align-items:baseline;
+  gap:1rem;margin-bottom:.6rem}
+.lvl{font-size:.75rem;letter-spacing:.1em;color:var(--chalk-mid);white-space:nowrap}
+.lvl b{color:var(--chalk);font-weight:700;font-size:1rem}
+.lvl .sep{color:var(--chalk-faint);margin:0 .5rem}
+.lvl.dim{color:var(--chalk-low);font-size:.625rem;letter-spacing:.14em}
+.bar{height:3px;background:var(--chalk-faint);overflow:hidden;border-radius:2px}
+.fill{
+  height:100%;width:0;background:var(--blush);border-radius:2px;
+  box-shadow:0 0 8px var(--blush-low);
+  transition:width 1.2s cubic-bezier(.2,.8,.3,1),background .6s;
+}
+.growth-note{
+  font-size:.5625rem;letter-spacing:.14em;color:var(--chalk-low);
+  margin:.55rem 0 0;text-transform:uppercase;
+}
+.growth.sad .fill{background:var(--chalk-low);box-shadow:none}
+.growth.sad .lvl b{color:var(--chalk-mid)}
+.growth.up .lvl b{animation:pop 1.4s cubic-bezier(.2,1.6,.4,1)}
+@keyframes pop{0%{transform:scale(1)}30%{transform:scale(1.55)}100%{transform:scale(1)}}
+@keyframes flare{0%{opacity:1}100%{opacity:0}}
+.pen.leveled::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 50% 55%,var(--blush) 0%,transparent 55%);
+  opacity:0;animation:flare 1.6s ease-out;
+}
 .presence{
   font-family:"Space Mono",monospace;font-size:.6875rem;letter-spacing:.1em;
   color:var(--chalk-low);margin:-1.5rem 0 1.5rem;min-height:1rem;
@@ -281,6 +308,14 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
 <section class="wrap">
   <p class="eyebrow">bother the cat</p>
   <p class="presence" id="presence" aria-live="polite"></p>
+  <div class="growth" id="growth">
+    <div class="growth-top">
+      <span class="lvl mono">lvl <b id="lvlNum">0</b><span class="sep">/</span><span id="lvlName">kitten</span></span>
+      <span class="lvl mono dim" id="lvlXp">0 / 100 xp</span>
+    </div>
+    <div class="bar"><div class="fill" id="lvlBar"></div></div>
+    <p class="growth-note mono" id="lvlNote">grows on buys. shrinks on sells.</p>
+  </div>
   <div class="pen" id="pen" role="img" aria-label="A three dimensional cark you can pet, feed and play with">
     <div class="glow"></div>
     <div class="stage" id="stage"></div>
@@ -710,6 +745,64 @@ a:focus-visible,button:focus-visible,textarea:focus-visible,img:focus-visible{
   }
   loadPresence();
   setInterval(function(){ if (!document.hidden) loadPresence(); }, 60000);
+
+  /* ---------- growth ----------
+     the level is global, the bot owns it. the page just reacts to it moving. */
+  var growthEl = document.getElementById("growth"), lastLevel = null, lastXp = null;
+
+  function showGrowth(d){
+    if (!d || d.level == null) return;
+    growthEl.classList.toggle("sad", d.feel === "sad");
+    document.getElementById("lvlNum").textContent = d.level;
+    document.getElementById("lvlName").textContent = d.size || "";
+
+    var into = d.into != null ? d.into : Math.round((d.progress || 0) * (d.need || 100));
+    document.getElementById("lvlXp").textContent =
+      into + " / " + (d.need || 100) + " xp" +
+      (d.peak && d.peak > d.level ? "   has been " + d.peak : "");
+
+    document.getElementById("lvlBar").style.width =
+      Math.max(2, Math.round((d.progress || 0) * 100)) + "%";
+
+    var note = document.getElementById("lvlNote");
+    if (d.new_buys)       note.textContent = d.new_buys + " new buys";
+    else if (d.new_sells) note.textContent = d.new_sells + " new sells";
+    else if (d.feel === "sad")   note.textContent = "shrinking";
+    else if (d.feel === "happy") note.textContent = "growing";
+    else note.textContent = "grows on buys. shrinks on sells.";
+
+    if (use3d) window.CarkCat.setSize(d.level, d.feel);
+
+    if (lastLevel !== null && d.level !== lastLevel){
+      var up = d.level > lastLevel;
+      if (use3d) up ? window.CarkCat.levelUp() : window.CarkCat.levelDown();
+      if (up){
+        pen.classList.add("leveled");
+        growthEl.classList.add("up");
+        setTimeout(function(){ pen.classList.remove("leveled"); }, 1700);
+        setTimeout(function(){ growthEl.classList.remove("up"); }, 1500);
+        spark("bigger");
+        speak("im bigger. i dont know why and im not asking");
+      } else {
+        speak("something took some of me. i want it back");
+      }
+    } else if (lastXp !== null && d.xp !== lastXp){
+      // no level change, but trades happened since last look
+      if (d.new_buys) { if (use3d) window.CarkCat.buy(); spark("prrp"); }
+      else if (d.new_sells) { if (use3d) window.CarkCat.sell(); }
+    }
+    lastLevel = d.level;
+    lastXp = d.xp;
+  }
+
+  function loadGrowth(){
+    fetch("/api/state?k=level", {cache:"no-cache"})
+      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+      .then(showGrowth)
+      .catch(function(){});
+  }
+  loadGrowth();
+  setInterval(function(){ if (!document.hidden) loadGrowth(); }, 30000);
 
   /* touching it means you are in charge now */
   Array.prototype.forEach.call(document.querySelectorAll("[data-scene],[data-act]"),
