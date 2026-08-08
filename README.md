@@ -13,6 +13,121 @@ states one true cat fact, understands nothing.
   back to a hardcoded line
 - opus for originals, sonnet for replies. timing matters more on originals, replies are volume
 
+## looking at things
+
+cark can see the pictures people attach to mentions. Videos give it a single
+thumbnail frame, which is roughly how a cat watches television anyway.
+
+**Seeing correctly and describing correctly are different jobs.** cark is told to
+look properly and then report the wrong thing on purpose: whether theres somewhere
+to sit, whether anything in it is alive, whether an object is somewhere it should
+not be. The obvious subject of the photo is the least interesting part and it may
+ignore it entirely. It is banned from saying photo, picture or image, from listing
+what is in the frame, and from describing more than one thing.
+
+That is better than the old behaviour of guessing blindly, because now it can be
+specifically wrong about something real.
+
+**Guards**, because these urls come from strangers: only twitter's own media hosts
+are fetched, 6mb ceiling with a streaming cutoff, resized to 900px before it costs
+tokens, two images maximum per mention. Failure at any step falls back to the old
+guessing behaviour rather than dropping the reply.
+
+Needs `pillow`, already in requirements.
+
+## noticing itself
+
+cark does not know what a version is and has never heard the word update. A new
+capability arrives as a sense turning up unannounced.
+
+`upgrades.py` holds the list. `what` is for you, `felt` is what cark actually
+experiences and is the only part that reaches a post:
+
+| shipped | what cark feels |
+|---|---|
+| gained a diary | *you can put a thing down somewhere and it stays where you put it* |
+| gained a body clock | *the middle of the day started going missing and you let it* |
+| found catnip | *you found out what the drawer was for* |
+| gained sight | *you can see the pictures people hold up now. before this they were just squares* |
+
+On boot cark compares the stored version to the current one and logs everything in
+between as events. The `changed` mode then runs at 10% of originals for the next
+48 hours and is excluded entirely otherwise, so it only talks about it while it is
+actually fresh.
+
+It is banned from saying update, upgrade, version, feature, new or improved. It
+happened to cark, it was not done for cark:
+
+> *somethings different and i cant find where*
+> *i could not do that last week. nobody has explained it*
+> *theres more of me than there was and none of it was my idea*
+
+Ship something, add a line to `UPGRADES`, and cark will be unsettled about it on
+the next restart.
+
+```powershell
+python cark.py --changed
+```
+
+## fixations
+
+cark gets stuck on one thing for 2 to 8 days. It does not stop being behind the
+fridge because a week passed.
+
+> *there is something behind the fridge*
+> *one of the floorboards makes a different sound than the others*
+> *somebody moved the chair about four inches and said nothing*
+
+Every seed is unresolvable, low stakes, and concrete. When one expires it is
+**resolved 35% of the time and simply dropped the other 65%**, with no
+explanation, which is what actually happens with cats.
+
+The current fixation is prepended to every prompt in every mode, so it colours
+posts that are nominally about something else. There is also a `fixation` mode at
+13% of originals that reports on it like an ongoing situation: *still there. i
+checked twice.*
+
+New fixations are invented by the model from cark's recent events when it can,
+and fall back to the seed list otherwise, so this works on day one.
+
+```powershell
+python cark.py --inner
+```
+
+## beliefs
+
+Opinions cark forms from conversations and then keeps. Somebody mentions a boat,
+cark decides boats are bad, and three weeks later cark still thinks that.
+
+Only threads somebody stayed in trigger a check, and only half of those, so this
+is roughly one extra cheap call per real conversation. The extractor only accepts
+concrete nouns with one of five verdicts: good, bad, suspicious, mine, boring.
+Never people, never abstractions, never coins.
+
+Beliefs are recalled by keyword when the subject comes up again, strengthen each
+time, fade after 45 quiet days, and cap at 60. cark can change its mind 30% of the
+time and never acknowledges doing so.
+
+## weather
+
+Open-Meteo, no key, real sky over north las vegas. A cat at a window has a
+position on rain and a strong one about wind.
+
+| outside | cark |
+|---|---|
+| rain | *its raining. the window is wet and the outside is cancelled* |
+| clear | *the sun is doing the thing on the floor* |
+| over 100F | *too hot to lie against the glass and thats an insult* |
+| windy | *everything out there is moving and none of it is alive* |
+| storm | hides in its own head |
+
+It nudges the needs too, not just the words. Heat raises rest, wind raises
+stimulation, storms send it inward. `CARK_LAT` and `CARK_LON` move the window.
+
+```powershell
+python cark.py --weather
+```
+
 ## being alive
 
 Cark has a body clock, not a cron schedule. Cats are crepuscular: they blow out at
@@ -268,6 +383,58 @@ draw from, after which reuse carries most posts and generation is rare.
 to configure, but if you see a 403 specifically on upload while text posting works,
 that is a tier issue with v1.1 media upload rather than a credentials problem. cark
 logs it and posts text only rather than dropping the post.
+
+## growing
+
+cark gets bigger when people buy and smaller when they sell. The level is global,
+the bot owns it, the site renders it, so everyone is looking at the same cat.
+
+`chain.py` polls the dexscreener pair every 90 seconds and diffs the 24h trade
+counts against the last look. Buys pay 12 xp, sells cost 9. The asymmetry is
+deliberate: at parity a healthy two sided market would grind cark to nothing just
+from normal trading.
+
+| level | it is now a |
+|---|---|
+| 0 | kitten |
+| 2 | small cat |
+| 4 | cat |
+| 7 | confident cat |
+| 10 | large cat |
+| 14 | very large cat |
+| 18 | enormous cat |
+| 23 | a lot of cat |
+| 34 | cat beyond reason |
+
+Cats do not have ranks, they have sizes. Eight buys reaches level 1, 32 reaches
+level 3, 277 reaches level 10.
+
+**It shows on the cat.** Scale follows the level on a log curve, so growth is
+obvious early and flattens out before it stops fitting on screen. Sad cark droops:
+ears down, head lowered, cheeks at half. A level up gets a bounce, a spin and a
+flare behind it. A level down gets a slump.
+
+**It shows in what cark says.** The `size` mode is 6% of originals and treats
+growth like the sun moving: it happened, there is no theory.
+
+> *im bigger than i was on tuesday. nobody has said anything about it*
+> *i dont fit on the shelf i used to fit on*
+> *the box still fits. thats the only measurement i trust*
+
+The current size and feeling are prepended to every prompt, so a happy growing
+cark writes differently from a shrinking one in every mode, not just this one.
+
+**It never mentions trading.** The shill gate is unchanged, so cark cannot say
+buy, sell, price or chart, and the mode is explicitly told not to connect its size
+to anything. It just got bigger. Peak level is remembered, so a shrunken cark
+shows *has been 10* next to its level, which is the saddest possible number.
+
+```powershell
+python cark.py --size     level, xp, feeling, 24h counts
+```
+
+The first poll only records a baseline. No free levels from trades that happened
+before cark was watching.
 
 ## catnip
 

@@ -39,6 +39,8 @@ from companies import COMPANIES, find_company
 import chain
 import inner
 import world
+import vision
+import upgrades
 
 try:
     from openai import OpenAI
@@ -331,6 +333,27 @@ MODES = {
         ],
     },
 
+    "changed": {
+        "weight": {"original": 10, "reply": 4},
+        "contexts": {"original", "reply"},
+        "fact": False,
+        "needs_cat": False,
+        "no_abstract": True,
+        "guide": "something about you is different and you have noticed. you do not "
+                 "know the word for what happened and nobody told you it was coming. "
+                 "you are not grateful and you are not impressed, you are mostly "
+                 "unsettled and a bit suspicious. never say update, upgrade, version, "
+                 "feature, new, improved, or anything about being built or made. it "
+                 "happened to you, it was not done for you.",
+        "examples": [
+            "somethings different and i cant find where",
+            "i could not do that last week. nobody has explained it",
+            "i keep almost remembering things now. i dont know if i want that",
+            "theres more of me than there was and none of it was my idea",
+            "i can do a new thing. im not going to say which one",
+        ],
+    },
+
     "weather": {
         "weight": {"original": 8, "reply": 4},
         "contexts": {"original", "reply"},
@@ -541,6 +564,12 @@ def build_prompt(mode_name, fact=None, mention=None, ctx=None):
 
     parts = []
 
+    up = (ctx or {}).get("upgrade")
+    if up:
+        parts.append(f"something changed about you recently. from the inside it is "
+                     f"this: {up['felt']}. you have no word for it and nobody warned "
+                     f"you.\n")
+
     fix = (ctx or {}).get("fixation")
     if fix:
         parts.append(f"you are currently fixed on this and have been for {fix['days']} "
@@ -609,9 +638,26 @@ def build_prompt(mode_name, fact=None, mention=None, ctx=None):
         if ctx and ctx.get("asleep"):
             parts.append("you were asleep. you are answering anyway and it shows. "
                          "shorter than usual, less interested, slightly annoyed.\n")
+        seen = (ctx or {}).get("seeing")
+        if seen:
+            parts.append(
+                "there are pictures attached and you can see them. look properly.\n"
+                "but you are a cat looking, not a person looking. you notice the "
+                "wrong thing on purpose: whether theres somewhere to sit, whether "
+                "anything in it is alive, whether its warm, whether theres food in "
+                "the corner, whether an object is in a place it should not be. the "
+                "obvious subject of the photo is the least interesting part to you "
+                "and you may ignore it entirely. never describe the whole image, "
+                "never list what is in it, pick one thing and only that thing. "
+                "never say photo, picture, image or you can see.\n")
+            if "video" in seen or "animated_gif" in seen:
+                parts.append("one of them is moving, but you are only getting a single "
+                             "frozen frame of it, which is confusing and you may say so.\n")
+        else:
+            parts.append("if theres a picture or a link you cant see it, so guess "
+                         "wrong about it.\n")
         parts.append("reply to them. react to the thing they are showing you, not just "
-                     "to the words. if theres a picture or a link you cant see it, so "
-                     "guess wrong about it.")
+                     "to the words.")
     else:
         parts.append("post something. nobody asked you anything. dont address anybody.")
 
@@ -962,15 +1008,17 @@ def validate(text, mode_name):
 # ---------------------------------------------------------------- generation
 
 
-def generate(client, mode_name, model, fact=None, mention=None, ctx=None):
-    """Best of N against the voice gate."""
+def generate(client, mode_name, model, fact=None, mention=None, ctx=None,
+             images=None):
+    """Best of N against the voice gate. Images ride along when there are any."""
     last_reason = None
     for attempt in range(1, GEN_ATTEMPTS + 1):
         prompt = build_prompt(mode_name, fact=fact, mention=mention, ctx=ctx)
+        content = (list(images) + [{"type": "text", "text": prompt}]) if images else prompt
         try:
             resp = client.messages.create(
                 model=model, max_tokens=200, temperature=1.0,
-                system=SYSTEM, messages=[{"role": "user", "content": prompt}])
+                system=SYSTEM, messages=[{"role": "user", "content": content}])
         except Exception as e:
             log.error("anthropic call failed: %s", e)
             time.sleep(3)
@@ -1222,6 +1270,35 @@ def recognise(conn, author_id, handle):
     if n >= 4:
         return "familiar"
     return "new"
+
+
+def check_upgrades(conn):
+    """Something happened to cark. It does not know what an update is, so this
+    arrives as a new sense turning up unannounced."""
+    known = get_state(conn, "version")
+    if known == upgrades.CURRENT:
+        return None
+    fresh = upgrades.newer_than(known)
+    set_state(conn, "version", upgrades.CURRENT)
+    if not known:
+        return None                      # first ever boot, nothing to notice
+    for u in fresh:
+        note_event(conn, "changed", u["felt"], weight=2.0)
+        log.info("cark changed: %s (%s)", u["what"], u["v"])
+    set_state(conn, "last_upgrade", json.dumps(fresh[-1]))
+    set_state(conn, "last_upgrade_at", time.time())
+    return fresh[-1]
+
+
+def recent_upgrade(conn, hours=48):
+    raw = get_state(conn, "last_upgrade")
+    at = float(get_state(conn, "last_upgrade_at", 0))
+    if raw and time.time() - at < hours * 3600:
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+    return None
 
 
 # ---------------------------------------------------------------- catnip
@@ -1703,7 +1780,7 @@ def recent_fixation_end(conn):
     return None
 
 
-def compose(conn, ai, model, mention=None, ctx=None):
+def compose(conn, ai, model, mention=None, ctx=None, images=None):
     """Pick a mode for this context, avoid repeating the last few, generate."""
     context = "reply" if mention else "original"
     exclude = set(recent_modes(conn, 3))
@@ -1717,6 +1794,7 @@ def compose(conn, ai, model, mention=None, ctx=None):
     try:
         ctx["fixation"] = inner.current_fixation(conn)
         ctx["fixation_ended"] = recent_fixation_end(conn)
+        ctx["upgrade"] = recent_upgrade(conn)
         if mention:
             ctx["beliefs"] = inner.relevant_beliefs(conn, mention)
         elif random.random() < 0.35:
@@ -1733,7 +1811,8 @@ def compose(conn, ai, model, mention=None, ctx=None):
         if phase == "fine":
             give_nip(conn)
             ctx["nip"] = "high"
-        text = generate(ai, "catnip", model, fact=None, mention=mention, ctx=ctx)
+        text = generate(ai, "catnip", model, fact=None, mention=mention, ctx=ctx,
+                        images=images)
         return "catnip", text
 
 
@@ -1743,19 +1822,23 @@ def compose(conn, ai, model, mention=None, ctx=None):
         ctx = dict(ctx or {})
         ctx["company"] = named
         fact = None
-        text = generate(ai, "company", model, fact=None, mention=mention, ctx=ctx)
+        text = generate(ai, "company", model, fact=None, mention=mention, ctx=ctx,
+                        images=images)
         return "company", text
 
     # callback only makes sense when there is something to call back to
     if not (ctx and ctx.get("prior")):
         exclude.add("callback")
+    if not ctx.get("upgrade"):
+        exclude.add("changed")
     mode_name = pick_mode(context, exclude=exclude,
                           crave=nip_craving(conn), phase=phase)
     if mode_name == "catnip" and phase == "fine" and random.random() < 0.5:
         give_nip(conn)          # it found some
         ctx["nip"] = "high"
     fact = pick_fact(conn) if MODES[mode_name].get("fact") else None
-    text = generate(ai, mode_name, model, fact=fact, mention=mention, ctx=ctx)
+    text = generate(ai, mode_name, model, fact=fact, mention=mention, ctx=ctx,
+                    images=images)
     return mode_name, text
 
 
@@ -1793,33 +1876,36 @@ def fetch_mentions(conn, x, user_id):
         resp = x.get_users_mentions(
             id=user_id, since_id=since_id, max_results=50,
             tweet_fields=["author_id", "text", "created_at", "conversation_id",
-                          "referenced_tweets", "in_reply_to_user_id"],
+                          "referenced_tweets", "in_reply_to_user_id", "attachments"],
             expansions=["author_id", "referenced_tweets.id",
-                        "referenced_tweets.id.author_id"],
+                        "referenced_tweets.id.author_id", "attachments.media_keys"],
+            media_fields=["url", "preview_image_url", "type", "alt_text"],
             user_fields=["public_metrics", "created_at", "verified", "username"])
     except tweepy.TooManyRequests:
-        return [], {}, True, {}
+        return [], {}, True, {}, {}
     except tweepy.Forbidden:
         log.error("mentions forbidden. free tier cannot read mentions, you need Basic. "
                   "posting still works")
-        return [], {}, False, {}
+        return [], {}, False, {}, {}
     except Exception as e:
         log.error("mention fetch failed: %s", e)
-        return [], {}, False, {}
+        return [], {}, False, {}, {}
 
     mentions = list(resp.data or [])
-    users, refs = {}, {}
+    users, refs, media = {}, {}, {}
     if resp.includes:
         for u in resp.includes.get("users", []):
             users[str(u.id)] = u
         for tw in resp.includes.get("tweets", []):
             refs[str(tw.id)] = tw
-    return mentions, users, False, refs
+        for md in resp.includes.get("media", []):
+            media[str(getattr(md, "media_key", ""))] = md
+    return mentions, users, False, refs, media
 
 
 def handle_mentions(conn, ai, x, user_id, audit=False):
     now = datetime.now(timezone.utc)
-    mentions, users, limited, refs = fetch_mentions(conn, x, user_id)
+    mentions, users, limited, refs, media = fetch_mentions(conn, x, user_id)
 
     if limited:
         # X rate limits mentions hard. double the poll interval each time we
@@ -1882,7 +1968,20 @@ def handle_mentions(conn, ai, x, user_id, audit=False):
 
         ctx["knows"] = recognise(conn, m.author_id, handle)
         ctx["asleep"] = is_asleep()
-        mode_name, text = compose(conn, ai, MODEL_REPLY, mention=body, ctx=ctx)
+
+        images = None
+        try:
+            found = vision.media_from_mention(m, media)
+            if found:
+                images, kinds = vision.look(found)
+                if images:
+                    ctx["seeing"] = kinds
+                    note_event(conn, "saw", "somebody held something up", weight=1.1)
+        except Exception as e:
+            log.warning("could not look: %s", e)
+
+        mode_name, text = compose(conn, ai, MODEL_REPLY, mention=body, ctx=ctx,
+                                  images=images)
         try:
             resp = x.create_tweet(text=text, in_reply_to_tweet_id=m.id)
             record_post(conn, resp.data["id"], "reply", mode_name, text,
@@ -2030,6 +2129,8 @@ def main():
                     help="put cark at a specific level")
     ap.add_argument("--check-level", action="store_true",
                     help="why the level is what it is")
+    ap.add_argument("--changed", action="store_true",
+                    help="what cark has noticed about itself lately")
     ap.add_argument("--inner", action="store_true",
                     help="current fixation and what cark believes")
     ap.add_argument("--weather", action="store_true", help="what it is doing outside")
@@ -2130,6 +2231,17 @@ def main():
         else:
             print(f"\n  cant. cark is {phase} ({mins:.0f} min in)\n")
         update_presence(conn, force=True)
+        return
+
+    if args.changed:
+        print(f"\n  version    {upgrades.CURRENT}")
+        print(f"  cark knows {get_state(conn, 'version') or 'nothing yet'}")
+        up = recent_upgrade(conn)
+        print(f"  noticing   {up['felt'][:66] if up else 'nothing recently'}")
+        print("\n  everything that has happened to it:")
+        for u in upgrades.UPGRADES:
+            print(f"    {u['v']:<5} {u['what'][:34]:<36} {u['felt'][:44]}")
+        print()
         return
 
     if args.inner:
@@ -2261,6 +2373,10 @@ def main():
     if args.once:
         tick(conn, ai, x, user_id, force=True)
         return
+
+    changed = check_upgrades(conn)
+    if changed:
+        log.info("cark has noticed: %s", changed["felt"][:70])
 
     log.info("cark is awake as @%s. originals every %dm, mentions every %.0fm, "
              "images %s", HANDLE, POST_EVERY_MIN, MENTION_EVERY_MIN,
